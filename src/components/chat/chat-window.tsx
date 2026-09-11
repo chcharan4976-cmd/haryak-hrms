@@ -1,0 +1,441 @@
+'use client'
+
+import { useState, useEffect, useRef } from 'react'
+import {
+  MessageSquare,
+  Send,
+  Search,
+  Plus,
+  User,
+  Users,
+  Building,
+  Loader2,
+  Paperclip,
+  ShieldCheck,
+  CheckCheck,
+} from 'lucide-react'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import { toast } from 'sonner'
+import { useAuth } from '@/components/providers/auth-provider'
+
+interface ChatConversation {
+  id: string
+  companyId: string
+  type: 'direct' | 'group' | 'channel'
+  title: string
+  participants: { userId: string; employeeId?: string; name: string }[]
+  lastMessage?: { content: string; senderName: string; createdAt: string } | null
+  createdAt: string
+  updatedAt: string
+}
+
+interface ChatMessage {
+  id: string
+  conversationId: string
+  senderUserId: string
+  senderEmployeeId?: string
+  senderName: string
+  content: string
+  attachments?: { name: string; url: string; size?: number; type?: string }[]
+  createdAt: string
+}
+
+interface SafeDirectoryResult {
+  id: string
+  employeeCode: string
+  fullName: string
+  officialEmail: string
+  department: string
+  designation: string
+}
+
+export function OrganizationChatWindow() {
+  const { user, profile } = useAuth()
+  const [conversations, setConversations] = useState<ChatConversation[]>([])
+  const [selectedConv, setSelectedConv] = useState<ChatConversation | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [loadingConvs, setLoadingConvs] = useState(true)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [inputText, setInputText] = useState('')
+  const [sending, setSending] = useState(false)
+
+  // Directory Search Modal
+  const [isSearchOpen, setIsSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [directoryResults, setDirectoryResults] = useState<SafeDirectoryResult[]>([])
+  const [searchingDir, setSearchingDir] = useState(false)
+
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  const fetchConversations = async () => {
+    try {
+      setLoadingConvs(true)
+      const res = await fetch('/api/chat/conversations')
+      const data = await res.json()
+      if (data.success) {
+        setConversations(data.conversations || [])
+        if (!selectedConv && data.conversations?.length > 0) {
+          setSelectedConv(data.conversations[0])
+        }
+      }
+    } catch (err) {
+      console.error('Error loading conversations:', err)
+    } finally {
+      setLoadingConvs(false)
+    }
+  }
+
+  const fetchMessages = async (convId: string) => {
+    try {
+      setLoadingMessages(true)
+      const res = await fetch(`/api/chat/messages?conversationId=${convId}`)
+      const data = await res.json()
+      if (data.success) {
+        setMessages(data.messages || [])
+      } else if (res.status === 403) {
+        toast.error('Access denied: You are not a participant in this conversation.')
+        setMessages([])
+      }
+    } catch (err) {
+      console.error('Error loading messages:', err)
+    } finally {
+      setLoadingMessages(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchConversations()
+  }, [])
+
+  useEffect(() => {
+    if (selectedConv) {
+      fetchMessages(selectedConv.id)
+    }
+  }, [selectedConv?.id])
+
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!inputText.trim() || !selectedConv) return
+
+    const textToSend = inputText.trim()
+    setInputText('')
+    setSending(true)
+
+    try {
+      const res = await fetch('/api/chat/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversationId: selectedConv.id,
+          content: textToSend,
+        }),
+      })
+      const data = await res.json()
+      if (data.success && data.message) {
+        setMessages(prev => [...prev, data.message])
+        fetchConversations()
+      } else {
+        toast.error(data.error || 'Failed to send message')
+      }
+    } catch (err) {
+      toast.error('Network error sending message')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  const handleDirectorySearch = async (query: string) => {
+    setSearchQuery(query)
+    try {
+      setSearchingDir(true)
+      const res = await fetch(`/api/chat/directory?query=${encodeURIComponent(query)}`)
+      const data = await res.json()
+      if (data.success) {
+        setDirectoryResults(data.results || [])
+      }
+    } catch (err) {
+      console.error('Directory search error:', err)
+    } finally {
+      setSearchingDir(false)
+    }
+  }
+
+  const openNewChatWith = async (emp: SafeDirectoryResult) => {
+    try {
+      const res = await fetch('/api/chat/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipientEmployeeId: emp.id,
+          type: 'direct',
+        }),
+      })
+      const data = await res.json()
+      if (data.success && data.conversation) {
+        setIsSearchOpen(false)
+        await fetchConversations()
+        setSelectedConv(data.conversation)
+      } else {
+        toast.error(data.error || 'Could not start conversation')
+      }
+    } catch (err) {
+      toast.error('Error starting conversation')
+    }
+  }
+
+  return (
+    <div className="h-[calc(100vh-12rem)] min-h-[520px] flex rounded-xl border bg-card overflow-hidden shadow-xs">
+      {/* Sidebar: Conversations */}
+      <div className="w-80 border-r flex flex-col bg-muted/10">
+        <div className="p-3.5 border-b flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <MessageSquare className="w-4 h-4 text-[#1e2a78]" />
+            <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">Messages</h2>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs px-2"
+            onClick={() => {
+              setIsSearchOpen(true)
+              handleDirectorySearch('')
+            }}
+          >
+            <Plus className="w-3 h-3 mr-1" /> New Chat
+          </Button>
+        </div>
+
+        {/* Conversations List */}
+        <div className="flex-1 overflow-y-auto divide-y">
+          {loadingConvs ? (
+            <div className="flex flex-col items-center justify-center p-8">
+              <Loader2 className="w-5 h-5 animate-spin text-[#1e2a78] mb-2" />
+              <span className="text-xs text-muted-foreground">Loading channels...</span>
+            </div>
+          ) : conversations.length === 0 ? (
+            <div className="p-6 text-center text-xs text-muted-foreground">
+              No conversations yet. Start a new chat with a colleague.
+            </div>
+          ) : (
+            conversations.map((conv) => {
+              const isSelected = selectedConv?.id === conv.id
+              const isChannel = conv.type === 'channel'
+              return (
+                <button
+                  key={conv.id}
+                  onClick={() => setSelectedConv(conv)}
+                  className={`w-full text-left p-3.5 transition-colors flex items-start gap-3 hover:bg-muted/40 ${
+                    isSelected ? 'bg-blue-50/70 dark:bg-blue-950/40 border-l-4 border-[#1e2a78]' : ''
+                  }`}
+                >
+                  <div className="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center shrink-0 text-[#1e2a78] dark:text-blue-300">
+                    {isChannel ? <Building className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-foreground truncate">{conv.title}</p>
+                      {conv.lastMessage && (
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(conv.lastMessage.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground truncate mt-0.5">
+                      {conv.lastMessage
+                        ? `${conv.lastMessage.senderName}: ${conv.lastMessage.content}`
+                        : 'No messages yet'}
+                    </p>
+                  </div>
+                </button>
+              )
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Main Chat Pane */}
+      <div className="flex-1 flex flex-col bg-background">
+        {selectedConv ? (
+          <>
+            {/* Header */}
+            <div className="p-3.5 border-b flex items-center justify-between bg-card">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-full bg-blue-50 text-[#1e2a78] dark:bg-blue-950 flex items-center justify-center font-bold text-xs">
+                  {selectedConv.type === 'channel' ? <Building className="w-4 h-4" /> : <User className="w-4 h-4" />}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold text-foreground">{selectedConv.title}</h3>
+                    {selectedConv.type === 'channel' && (
+                      <Badge variant="outline" className="text-[9px] py-0 px-1.5 bg-blue-50 text-[#1e2a78]">
+                        COMPANY BROADCAST
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    {selectedConv.type === 'channel'
+                      ? 'Accessible to all Haryak Technologies members'
+                      : `${selectedConv.participants.length} participants`}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="text-[11px]">Encrypted Organization Chat</span>
+              </div>
+            </div>
+
+            {/* Message Thread */}
+            <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-50/50 dark:bg-slate-950/20">
+              {loadingMessages ? (
+                <div className="flex flex-col items-center justify-center h-full">
+                  <Loader2 className="w-6 h-6 animate-spin text-[#1e2a78] mb-2" />
+                  <span className="text-xs text-muted-foreground">Loading chat history...</span>
+                </div>
+              ) : messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center text-muted-foreground space-y-1">
+                  <MessageSquare className="w-8 h-8 opacity-30" />
+                  <p className="text-xs font-medium">This is the start of your secure conversation.</p>
+                  <p className="text-[11px]">Send a message below to start collaborating.</p>
+                </div>
+              ) : (
+                messages.map((msg) => {
+                  const isMine =
+                    msg.senderUserId === user?.id ||
+                    (profile?.full_name && msg.senderName === profile.full_name)
+                  return (
+                    <div
+                      key={msg.id}
+                      className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}
+                    >
+                      <span className="text-[10px] text-muted-foreground px-1 mb-0.5">
+                        {isMine ? 'You' : msg.senderName} • {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                      <div
+                        className={`max-w-md p-3 rounded-xl text-xs leading-relaxed ${
+                          isMine
+                            ? 'bg-[#1e2a78] text-white rounded-tr-none'
+                            : 'bg-white dark:bg-card border text-foreground rounded-tl-none shadow-xs'
+                        }`}
+                      >
+                        {msg.content}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input Bar */}
+            <form onSubmit={handleSendMessage} className="p-3 border-t bg-card flex items-center gap-2">
+              <Input
+                value={inputText}
+                onChange={(e) => setInputText(e.target.value)}
+                placeholder={`Message ${selectedConv.title}...`}
+                className="text-xs h-9"
+                disabled={sending}
+              />
+              <Button
+                type="submit"
+                size="sm"
+                className="bg-[#1e2a78] hover:bg-[#152060] text-white h-9 px-4 text-xs"
+                disabled={sending || !inputText.trim()}
+              >
+                {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              </Button>
+            </form>
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-muted-foreground space-y-2">
+            <MessageSquare className="w-12 h-12 opacity-20" />
+            <h3 className="text-sm font-semibold text-foreground">No Conversation Selected</h3>
+            <p className="text-xs max-w-sm">
+              Select a conversation from the sidebar or click &ldquo;New Chat&rdquo; to search the company directory.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Safe Directory Search Modal */}
+      <Dialog open={isSearchOpen} onOpenChange={setIsSearchOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-sm font-bold">New Organization Chat</DialogTitle>
+            <DialogDescription className="text-xs">
+              Search by Employee ID (e.g. HRK-001, HRK-002, HRK-003), Name, or Official Email.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 absolute left-3 top-3 text-muted-foreground" />
+              <Input
+                placeholder="Type HRK-001, Priya, or email..."
+                value={searchQuery}
+                onChange={(e) => handleDirectorySearch(e.target.value)}
+                className="pl-8 text-xs h-9"
+              />
+            </div>
+
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {searchingDir ? (
+                <div className="p-6 text-center">
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto text-[#1e2a78] mb-1" />
+                  <span className="text-xs text-muted-foreground">Searching company directory...</span>
+                </div>
+              ) : directoryResults.length === 0 ? (
+                <div className="p-6 text-center text-xs text-muted-foreground">
+                  No matching employees found in company directory.
+                </div>
+              ) : (
+                directoryResults.map((emp) => (
+                  <div
+                    key={emp.id}
+                    className="p-3 border rounded-xl bg-card hover:bg-muted/20 transition-colors flex items-center justify-between"
+                  >
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <p className="text-xs font-semibold text-foreground">{emp.fullName}</p>
+                        <Badge variant="outline" className="text-[10px] font-mono py-0">{emp.employeeCode}</Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">{emp.designation} • {emp.department}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono">{emp.officialEmail}</p>
+                    </div>
+
+                    <Button
+                      size="sm"
+                      className="bg-[#1e2a78] hover:bg-[#152060] text-white text-xs h-7"
+                      onClick={() => openNewChatWith(emp)}
+                    >
+                      Chat
+                    </Button>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  )
+}

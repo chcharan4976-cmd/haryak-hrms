@@ -1,0 +1,3872 @@
+import { NextResponse } from 'next/server'
+
+import {
+  createAdminClient,
+} from '@/lib/supabase/admin'
+
+import {
+  resolveRequestContext,
+  hasRole,
+} from '@/lib/services/company-resolver'
+
+import {
+  createAuditLog,
+} from '@/lib/services/audit-service'
+
+import {
+  calculatePayroll,
+  calculatePaidDays,
+  type PayrollInput,
+} from '@/lib/payroll/payroll-engine'
+
+import {
+  getEffectiveCompensation,
+} from '@/lib/services/compensation-service'
+
+import {
+  isTimesheetApprovedForPayroll,
+} from '@/lib/services/timesheet-service'
+
+// ============================================================
+// TYPES
+// ============================================================
+
+type PayrollLeaveKind =
+  | 'PAID'
+  | 'UNPAID'
+  | 'UNKNOWN'
+
+interface PayrollDayResolution {
+  lopDays: number
+  attendanceLopDates: string[]
+  unpaidLeaveDates: string[]
+  paidLeaveDates: string[]
+  holidays: string[]
+  unknownLeaveDates: string[]
+  warnings: Array<{
+    code: string
+    message: string
+  }>
+}
+
+interface TimesheetReconciliationResult {
+  workedDates: string[]
+  paidLeaveDates: string[]
+  unpaidLeaveDates: string[]
+  unresolvedDates: string[]
+}
+
+interface PayrollSelection {
+  employeeIds: string[]
+  mode:
+    | 'ALL'
+    | 'SINGLE'
+    | 'SELECTED'
+}
+
+// ============================================================
+// GENERIC HELPERS
+// ============================================================
+
+function normalizeDateOnly(
+  value: unknown
+): string | null {
+  if (!value) {
+    return null
+  }
+
+  if (
+    typeof value === 'string'
+  ) {
+    const trimmed =
+      value.trim()
+
+    const datePrefix =
+      trimmed.match(
+        /^(\d{4})-(\d{2})-(\d{2})/
+      )
+
+    if (datePrefix) {
+      return `${datePrefix[1]}-${datePrefix[2]}-${datePrefix[3]}`
+    }
+  }
+
+  const date =
+    new Date(
+      String(value)
+    )
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return null
+  }
+
+  const year =
+    date.getUTCFullYear()
+
+  const month =
+    String(
+      date.getUTCMonth() + 1
+    ).padStart(
+      2,
+      '0'
+    )
+
+  const day =
+    String(
+      date.getUTCDate()
+    ).padStart(
+      2,
+      '0'
+    )
+
+  return `${year}-${month}-${day}`
+}
+
+function parseDateOnly(
+  value: string
+): {
+  year: number
+  month: number
+  day: number
+} {
+  const match =
+    value.match(
+      /^(\d{4})-(\d{2})-(\d{2})$/
+    )
+
+  if (!match) {
+    throw new Error(
+      `Invalid date-only value: ${value}`
+    )
+  }
+
+  return {
+    year:
+      Number(
+        match[1]
+      ),
+
+    month:
+      Number(
+        match[2]
+      ),
+
+    day:
+      Number(
+        match[3]
+      ),
+  }
+}
+
+function addDays(
+  value: string,
+  amount: number
+): string {
+  const {
+    year,
+    month,
+    day,
+  } =
+    parseDateOnly(
+      value
+    )
+
+  const timestamp =
+    Date.UTC(
+      year,
+      month - 1,
+      day + amount
+    )
+
+  const date =
+    new Date(
+      timestamp
+    )
+
+  return [
+    String(
+      date.getUTCFullYear()
+    ).padStart(
+      4,
+      '0'
+    ),
+
+    String(
+      date.getUTCMonth() + 1
+    ).padStart(
+      2,
+      '0'
+    ),
+
+    String(
+      date.getUTCDate()
+    ).padStart(
+      2,
+      '0'
+    ),
+  ].join('-')
+}
+
+function getDayOfWeek(
+  value: string
+): number {
+  const {
+    year,
+    month,
+    day,
+  } =
+    parseDateOnly(
+      value
+    )
+
+  return new Date(
+    Date.UTC(
+      year,
+      month - 1,
+      day
+    )
+  ).getUTCDay()
+}
+
+function enumerateDates(
+  start: string,
+  end: string
+): string[] {
+  const dates:
+    string[] = []
+
+  let current =
+    start
+
+  while (
+    current <= end
+  ) {
+    dates.push(
+      current
+    )
+
+    current =
+      addDays(
+        current,
+        1
+      )
+  }
+
+  return dates
+}
+
+function isDateInsidePeriod(
+  date: string,
+  start: string,
+  end: string
+): boolean {
+  return (
+    date >= start &&
+    date <= end
+  )
+}
+
+function rangesOverlap(
+  startA: string,
+  endA: string,
+  startB: string,
+  endB: string
+): boolean {
+  return (
+    startA <= endB &&
+    endA >= startB
+  )
+}
+
+function normalizeSelection(
+  body: any
+): PayrollSelection {
+  const rawSingle =
+    typeof body?.employee_id ===
+    'string'
+      ? body.employee_id.trim()
+      : ''
+
+  const rawMany =
+    Array.isArray(
+      body?.employee_ids
+    )
+      ? body.employee_ids
+      : []
+
+  const ids =
+    [
+      rawSingle,
+      ...rawMany,
+    ]
+      .map(
+        value =>
+          String(
+            value || ''
+          ).trim()
+      )
+      .filter(Boolean)
+
+  const employeeIds =
+    [
+      ...new Set<string>(
+        ids
+      ),
+    ]
+
+  if (
+    employeeIds.length === 1
+  ) {
+    return {
+      employeeIds,
+      mode:
+        'SINGLE',
+    }
+  }
+
+  if (
+    employeeIds.length > 1
+  ) {
+    return {
+      employeeIds,
+      mode:
+        'SELECTED',
+    }
+  }
+
+  /**
+   * Compatibility mode:
+   * if the old UI sends no employee selection,
+   * payroll still runs for all active employees.
+   *
+   * Once the UI is updated, send employee_id or employee_ids.
+   */
+  return {
+    employeeIds: [],
+    mode:
+      'ALL',
+  }
+}
+
+// ============================================================
+// STATUTORY DETAILS
+// ============================================================
+
+function normalizeStatutoryDetails(
+  raw: any
+) {
+  const record =
+    Array.isArray(raw)
+      ? raw[0]
+      : raw
+
+  if (!record) {
+    return {
+      pf_applicable:
+        false,
+
+      esi_applicable:
+        false,
+
+      pt_applicable:
+        false,
+
+      pt_state:
+        null,
+
+      pt_amount:
+        null,
+
+      pf_amount:
+        null,
+
+      tax_regime:
+        'new',
+    }
+  }
+
+  return {
+    pf_applicable:
+      Boolean(
+        record.pf_applicable
+      ),
+
+    esi_applicable:
+      Boolean(
+        record.esi_applicable
+      ),
+
+    pt_applicable:
+      Boolean(
+        record.pt_applicable
+      ),
+
+    pt_state:
+      record.pt_state ||
+      null,
+
+    pt_amount:
+      record.pt_amount !==
+        undefined &&
+      record.pt_amount !==
+        null
+        ? Number(
+            record.pt_amount
+          )
+        : null,
+
+    pf_amount:
+      record.pf_amount !==
+        undefined &&
+      record.pf_amount !==
+        null
+        ? Number(
+            record.pf_amount
+          )
+        : null,
+
+    tax_regime:
+      record.tax_regime ||
+      'new',
+  }
+}
+
+// ============================================================
+// WEEKLY-OFF POLICY
+// ============================================================
+
+function normalizeWeeklyOffs(
+  settings: any
+): number[] {
+  const normalize =
+    (
+      value: unknown
+    ): number[] => {
+      if (
+        !Array.isArray(
+          value
+        )
+      ) {
+        return []
+      }
+
+      const result:
+        number[] = []
+
+      for (
+        const item of value
+      ) {
+        const numeric =
+          Number(item)
+
+        if (
+          Number.isInteger(
+            numeric
+          ) &&
+          numeric >= 0 &&
+          numeric <= 6
+        ) {
+          result.push(
+            numeric
+          )
+        }
+      }
+
+      return [
+        ...new Set<number>(
+          result
+        ),
+      ]
+    }
+
+  const primary =
+    normalize(
+      settings?.weekly_offs
+    )
+
+  if (
+    primary.length > 0
+  ) {
+    return primary
+  }
+
+  const alternate =
+    normalize(
+      settings
+        ?.weekly_off_days
+    )
+
+  if (
+    alternate.length > 0
+  ) {
+    return alternate
+  }
+
+  /**
+   * Current compatibility fallback.
+   * Move this into explicit company settings later.
+   */
+  return [
+    0,
+    6,
+  ]
+}
+
+// ============================================================
+// HOLIDAY HELPERS
+// ============================================================
+
+function getHolidayDate(
+  holiday: any
+): string | null {
+  return normalizeDateOnly(
+    holiday.holiday_date ??
+      holiday.date ??
+      holiday.event_date ??
+      holiday.start_date
+  )
+}
+
+function getHolidayDatesForPeriod(
+  holidays: any[],
+  startDate: string,
+  endDate: string
+): string[] {
+  const result =
+    new Set<string>()
+
+  for (
+    const holiday of
+      holidays || []
+  ) {
+    if (
+      holiday.is_active ===
+        false ||
+      holiday.active ===
+        false
+    ) {
+      continue
+    }
+
+    const date =
+      getHolidayDate(
+        holiday
+      )
+
+    if (
+      !date ||
+      !isDateInsidePeriod(
+        date,
+        startDate,
+        endDate
+      )
+    ) {
+      continue
+    }
+
+    result.add(
+      date
+    )
+  }
+
+  return [
+    ...result,
+  ].sort()
+}
+
+function getWorkingDatesForPeriod(
+  periodStart: string,
+  periodEnd: string,
+  weeklyOffs: number[],
+  holidayDates: string[]
+): string[] {
+  const holidaySet =
+    new Set<string>(
+      holidayDates
+    )
+
+  const workingDates:
+    string[] = []
+
+  for (
+    const date of
+      enumerateDates(
+        periodStart,
+        periodEnd
+      )
+  ) {
+    const dayOfWeek =
+      getDayOfWeek(
+        date
+      )
+
+    if (
+      weeklyOffs.includes(
+        dayOfWeek
+      )
+    ) {
+      continue
+    }
+
+    if (
+      holidaySet.has(
+        date
+      )
+    ) {
+      continue
+    }
+
+    if (
+      !isDateInsidePeriod(
+        date,
+        periodStart,
+        periodEnd
+      )
+    ) {
+      continue
+    }
+
+    workingDates.push(
+      date
+    )
+  }
+
+  return workingDates
+}
+
+// ============================================================
+// LEAVE HELPERS
+// ============================================================
+
+function getLeaveStartDate(
+  leave: any
+): string | null {
+  return normalizeDateOnly(
+    leave.start_date
+  )
+}
+
+function getLeaveEndDate(
+  leave: any
+): string | null {
+  return normalizeDateOnly(
+    leave.end_date ??
+      leave.start_date
+  )
+}
+
+function isApprovedLeave(
+  leave: any
+): boolean {
+  const status =
+    String(
+      leave.status ||
+        ''
+    )
+      .trim()
+      .toUpperCase()
+
+  return (
+    status ===
+      'APPROVED' ||
+    status ===
+      'APPROVE'
+  )
+}
+
+/**
+ * Haryak DB truth:
+ *
+ * leave_requests.leave_type_id
+ *          -> leave_types.id
+ *
+ * leave_types.is_paid = true
+ *          -> PAID leave
+ *
+ * leave_types.is_paid = false
+ *          -> UNPAID / LOP
+ */
+function determineLeaveKind(
+  leaveType: any
+): PayrollLeaveKind {
+  if (
+    !leaveType
+  ) {
+    return 'UNKNOWN'
+  }
+
+  if (
+    leaveType.is_active ===
+    false
+  ) {
+    return 'UNKNOWN'
+  }
+
+  if (
+    leaveType.is_paid ===
+    true
+  ) {
+    return 'PAID'
+  }
+
+  if (
+    leaveType.is_paid ===
+    false
+  ) {
+    return 'UNPAID'
+  }
+
+  return 'UNKNOWN'
+}
+
+function resolveApprovedLeaveDays(
+  leaves: any[],
+  leaveTypesById:
+    Map<string, any>,
+  periodStart:
+    string,
+  periodEnd:
+    string
+) {
+  const paidLeaveDates =
+    new Set<string>()
+
+  const unpaidLeaveDates =
+    new Set<string>()
+
+  const unknownApprovedLeaveDates =
+    new Set<string>()
+
+  for (
+    const leave of
+      leaves || []
+  ) {
+    if (
+      !isApprovedLeave(
+        leave
+      )
+    ) {
+      continue
+    }
+
+    const start =
+      getLeaveStartDate(
+        leave
+      )
+
+    const end =
+      getLeaveEndDate(
+        leave
+      )
+
+    if (
+      !start ||
+      !end ||
+      !rangesOverlap(
+        start,
+        end,
+        periodStart,
+        periodEnd
+      )
+    ) {
+      continue
+    }
+
+    const clippedStart =
+      start <
+      periodStart
+        ? periodStart
+        : start
+
+    const clippedEnd =
+      end >
+      periodEnd
+        ? periodEnd
+        : end
+
+    const leaveType =
+      leave.leave_type_id
+        ? leaveTypesById.get(
+            leave.leave_type_id
+          )
+        : null
+
+    const kind =
+      determineLeaveKind(
+        leaveType
+      )
+
+    for (
+      const date of
+        enumerateDates(
+          clippedStart,
+          clippedEnd
+        )
+    ) {
+      if (
+        kind ===
+        'PAID'
+      ) {
+        paidLeaveDates.add(
+          date
+        )
+      } else if (
+        kind ===
+        'UNPAID'
+      ) {
+        unpaidLeaveDates.add(
+          date
+        )
+      } else {
+        unknownApprovedLeaveDates.add(
+          date
+        )
+      }
+    }
+  }
+
+  return {
+    paidLeaveDates,
+    unpaidLeaveDates,
+    unknownApprovedLeaveDates,
+  }
+}
+
+// ============================================================
+// ATTENDANCE HELPERS
+// ============================================================
+
+function getAttendanceDate(
+  record: any
+): string | null {
+  return normalizeDateOnly(
+    record.attendance_date ??
+      record.work_date ??
+      record.date
+  )
+}
+
+function normalizeAttendanceStatus(
+  value: unknown
+): string {
+  return String(
+    value || ''
+  )
+    .trim()
+    .toUpperCase()
+    .replace(
+      /\s+/g,
+      '_'
+    )
+}
+
+function isAttendanceLOP(
+  status: string
+): boolean {
+  return [
+    'ABSENT',
+    'LOP',
+    'LOSS_OF_PAY',
+    'UNPAID',
+    'UNPAID_LEAVE',
+    'LEAVE_WITHOUT_PAY',
+  ].includes(
+    status
+  )
+}
+
+// ============================================================
+// TIMESHEET HELPERS
+// ============================================================
+
+function getTimesheetEntryDate(
+  entry: any
+): string | null {
+  return normalizeDateOnly(
+    entry.entry_date ??
+      entry.work_date ??
+      entry.date
+  )
+}
+
+function hasPositiveTimesheetHours(
+  entry: any
+): boolean {
+  const hours =
+    Number(
+      entry.hours || 0
+    )
+
+  return (
+    Number.isFinite(
+      hours
+    ) &&
+    hours > 0
+  )
+}
+
+function reconcileTimesheetDates(
+  params: {
+    workingDates:
+      string[]
+
+    timesheetEntries:
+      any[]
+
+    paidLeaveDates:
+      string[]
+
+    unpaidLeaveDates:
+      string[]
+
+    joiningDate?:
+      string | null
+
+    lastWorkingDate?:
+      string | null
+  }
+): TimesheetReconciliationResult {
+  const {
+    workingDates,
+    timesheetEntries,
+    paidLeaveDates,
+    unpaidLeaveDates,
+    joiningDate,
+    lastWorkingDate,
+  } = params
+
+  const workedSet =
+    new Set<string>()
+
+  for (
+    const entry of
+      timesheetEntries || []
+  ) {
+    if (
+      !hasPositiveTimesheetHours(
+        entry
+      )
+    ) {
+      continue
+    }
+
+    const date =
+      getTimesheetEntryDate(
+        entry
+      )
+
+    if (date) {
+      workedSet.add(
+        date
+      )
+    }
+  }
+
+  const paidLeaveSet =
+    new Set<string>(
+      paidLeaveDates
+    )
+
+  const unpaidLeaveSet =
+    new Set<string>(
+      unpaidLeaveDates
+    )
+
+  const unresolvedSet =
+    new Set<string>()
+
+  const effectiveJoin =
+    joiningDate
+      ? normalizeDateOnly(
+          joiningDate
+        )
+      : null
+
+  const effectiveExit =
+    lastWorkingDate
+      ? normalizeDateOnly(
+          lastWorkingDate
+        )
+      : null
+
+  for (
+    const date of
+      workingDates
+  ) {
+    if (
+      effectiveJoin &&
+      date < effectiveJoin
+    ) {
+      continue
+    }
+
+    if (
+      effectiveExit &&
+      date > effectiveExit
+    ) {
+      continue
+    }
+
+    if (
+      workedSet.has(
+        date
+      )
+    ) {
+      continue
+    }
+
+    if (
+      paidLeaveSet.has(
+        date
+      )
+    ) {
+      continue
+    }
+
+    if (
+      unpaidLeaveSet.has(
+        date
+      )
+    ) {
+      continue
+    }
+
+    unresolvedSet.add(
+      date
+    )
+  }
+
+  return {
+    workedDates:
+      [
+        ...workedSet,
+      ].sort(),
+
+    paidLeaveDates:
+      [
+        ...paidLeaveSet,
+      ].sort(),
+
+    unpaidLeaveDates:
+      [
+        ...unpaidLeaveSet,
+      ].sort(),
+
+    unresolvedDates:
+      [
+        ...unresolvedSet,
+      ].sort(),
+  }
+}
+
+// ============================================================
+// PAYROLL DAY RECONCILIATION
+// ============================================================
+
+function resolvePayrollDays(
+  params: {
+    attendance:
+      any[]
+
+    leaves:
+      any[]
+
+    leaveTypesById:
+      Map<string, any>
+
+    holidayDates:
+      string[]
+
+    weeklyOffs:
+      number[]
+
+    periodStart:
+      string
+
+    periodEnd:
+      string
+  }
+): PayrollDayResolution {
+  const {
+    attendance,
+    leaves,
+    leaveTypesById,
+    holidayDates,
+    weeklyOffs,
+    periodStart,
+    periodEnd,
+  } = params
+
+  const leaveResolution =
+    resolveApprovedLeaveDays(
+      leaves,
+      leaveTypesById,
+      periodStart,
+      periodEnd
+    )
+
+  const holidaySet =
+    new Set<string>(
+      holidayDates
+    )
+
+  const attendanceLopDates =
+    new Set<string>()
+
+  const warnings:
+    Array<{
+      code: string
+      message: string
+    }> = []
+
+  for (
+    const record of
+      attendance || []
+  ) {
+    const date =
+      getAttendanceDate(
+        record
+      )
+
+    if (
+      !date ||
+      !isDateInsidePeriod(
+        date,
+        periodStart,
+        periodEnd
+      )
+    ) {
+      continue
+    }
+
+    const dayOfWeek =
+      getDayOfWeek(
+        date
+      )
+
+    if (
+      weeklyOffs.includes(
+        dayOfWeek
+      )
+    ) {
+      continue
+    }
+
+    if (
+      holidaySet.has(
+        date
+      )
+    ) {
+      continue
+    }
+
+    /**
+     * Approved paid leave overrides an accidental ABSENT row.
+     */
+    if (
+      leaveResolution
+        .paidLeaveDates
+        .has(date)
+    ) {
+      continue
+    }
+
+    const status =
+      normalizeAttendanceStatus(
+        record.status
+      )
+
+    if (
+      isAttendanceLOP(
+        status
+      )
+    ) {
+      attendanceLopDates.add(
+        date
+      )
+    }
+  }
+
+  /**
+   * Unique-date LOP calculation prevents double deduction when
+   * attendance and leave both mark the same date as unpaid.
+   */
+  const finalLopDates =
+    new Set<string>()
+
+  for (
+    const date of
+      attendanceLopDates
+  ) {
+    finalLopDates.add(
+      date
+    )
+  }
+
+  for (
+    const date of
+      leaveResolution
+        .unpaidLeaveDates
+  ) {
+    finalLopDates.add(
+      date
+    )
+  }
+
+  for (
+    const date of
+      [...finalLopDates]
+  ) {
+    if (
+      holidaySet.has(
+        date
+      )
+    ) {
+      finalLopDates.delete(
+        date
+      )
+
+      continue
+    }
+
+    const dayOfWeek =
+      getDayOfWeek(
+        date
+      )
+
+    if (
+      weeklyOffs.includes(
+        dayOfWeek
+      )
+    ) {
+      finalLopDates.delete(
+        date
+      )
+    }
+  }
+
+  if (
+    leaveResolution
+      .unknownApprovedLeaveDates
+      .size > 0
+  ) {
+    warnings.push({
+      code:
+        'LEAVE_PAY_STATUS_UNCONFIGURED',
+
+      message:
+        `${leaveResolution.unknownApprovedLeaveDates.size} approved leave day(s) have no clear paid/unpaid configuration. They were not automatically deducted.`,
+    })
+  }
+
+  return {
+    lopDays:
+      finalLopDates.size,
+
+    attendanceLopDates:
+      [
+        ...attendanceLopDates,
+      ].sort(),
+
+    unpaidLeaveDates:
+      [
+        ...leaveResolution
+          .unpaidLeaveDates,
+      ].sort(),
+
+    paidLeaveDates:
+      [
+        ...leaveResolution
+          .paidLeaveDates,
+      ].sort(),
+
+    holidays:
+      [
+        ...holidayDates,
+      ].sort(),
+
+    unknownLeaveDates:
+      [
+        ...leaveResolution
+          .unknownApprovedLeaveDates,
+      ].sort(),
+
+    warnings,
+  }
+}
+
+// ============================================================
+// BLOCKED PAYROLL RECORD
+// ============================================================
+
+function buildBlockedPayrollRecord(
+  params: {
+    runId: string
+    employee: any
+    period: any
+
+    salaryStructureId:
+      string | null
+
+    annualCtc:
+      number
+
+    monthlyGross:
+      number
+
+    blockerCode:
+      string
+
+    blockerMessage:
+      string
+
+    warnings?:
+      Array<{
+        code: string
+        message: string
+      }>
+
+    components?:
+      any[]
+
+    calculationDetails?:
+      Record<
+        string,
+        unknown
+      >
+  }
+) {
+  const {
+    runId,
+    employee,
+    period,
+    salaryStructureId,
+    annualCtc,
+    monthlyGross,
+    blockerCode,
+    blockerMessage,
+    warnings = [],
+    components = [],
+    calculationDetails = {},
+  } = params
+
+  return {
+    /**
+     * payroll_employee_records.id is NOT NULL.
+     */
+    id:
+      crypto.randomUUID(),
+
+    payroll_run_id:
+      runId,
+
+    employee_id:
+      employee.id,
+
+    employee_code:
+      employee.employee_code,
+
+    employee_name:
+      employee.full_name,
+
+    department_name:
+      employee.departments?.name ||
+      '',
+
+    designation_name:
+      employee.designations?.name ||
+      '',
+
+    joining_date:
+      employee.joining_date,
+
+    salary_structure_id:
+      salaryStructureId,
+
+    annual_ctc:
+      annualCtc,
+
+    monthly_gross_entitlement:
+      monthlyGross,
+
+    calendar_days:
+      Number(
+        period.calendar_days ||
+          0
+      ),
+
+    working_days:
+      Number(
+        period.working_days ||
+          0
+      ),
+
+    paid_days:
+      0,
+
+    lop_days:
+      0,
+
+    gross_earnings:
+      0,
+
+    total_deductions:
+      0,
+
+    net_salary:
+      0,
+
+    status:
+      'error',
+
+    warnings:
+      warnings.length > 0
+        ? warnings
+        : [
+            {
+              code:
+                blockerCode,
+
+              message:
+                blockerMessage,
+            },
+          ],
+
+    errors: [
+      {
+        code:
+          blockerCode,
+
+        message:
+          blockerMessage,
+      },
+    ],
+
+    calculation_details: {
+      blocked:
+        true,
+
+      blocker:
+        blockerCode,
+
+      annualCtc,
+
+      monthlyGrossEntitlement:
+        monthlyGross,
+
+      components,
+
+      ...calculationDetails,
+    },
+  }
+}
+
+// ============================================================
+// GET PAYROLL RUNS
+// ============================================================
+
+export async function GET(
+  request: Request
+) {
+  try {
+    const auth =
+      await resolveRequestContext()
+
+    if (!auth.ok) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            auth.error.message,
+        },
+        {
+          status:
+            auth.error.status,
+        }
+      )
+    }
+
+    const {
+      companyId,
+    } =
+      auth.context
+
+    if (
+      !hasRole(
+        auth.context,
+        'SUPER_ADMIN',
+        'HR_ADMIN',
+        'PAYROLL_ADMIN'
+      )
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            'Unauthorized',
+        },
+        {
+          status:
+            403,
+        }
+      )
+    }
+
+    const {
+      searchParams,
+    } =
+      new URL(
+        request.url
+      )
+
+    const payrollPeriodId =
+      searchParams.get(
+        'payroll_period_id'
+      )
+
+    const admin =
+      createAdminClient()
+
+    if (!admin) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            'Database unavailable.',
+        },
+        {
+          status:
+            503,
+        }
+      )
+    }
+
+    let query =
+      admin
+        .from(
+          'payroll_runs'
+        )
+        .select(`
+          *,
+          payroll_periods(*)
+        `)
+        .eq(
+          'company_id',
+          companyId
+        )
+        .order(
+          'created_at',
+          {
+            ascending:
+              false,
+          }
+        )
+
+    if (
+      payrollPeriodId
+    ) {
+      query =
+        query.eq(
+          'payroll_period_id',
+          payrollPeriodId
+        )
+    }
+
+    const {
+      data,
+      error,
+    } =
+      await query
+
+    if (error) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            error.message,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    const runs =
+      (
+        data || []
+      ).map(
+        (
+          run: any
+        ) => ({
+          id:
+            run.id,
+
+          period_id:
+            run.payroll_period_id,
+
+          period:
+            run.payroll_periods
+              ? `${run.payroll_periods.period_year}-${String(
+                  run.payroll_periods.period_month
+                ).padStart(
+                  2,
+                  '0'
+                )}`
+              : '',
+
+          run_number:
+            run.run_number,
+
+          run_type:
+            run.run_type,
+
+          status:
+            run.status,
+
+          total_employees:
+            run.total_employees,
+
+          total_gross:
+            Number(
+              run.total_gross ||
+                0
+            ),
+
+          total_deductions:
+            Number(
+              run.total_deductions ||
+                0
+            ),
+
+          total_net:
+            Number(
+              run.total_net ||
+                0
+            ),
+
+          created_at:
+            run.created_at,
+        })
+      )
+
+    return NextResponse.json({
+      success:
+        true,
+
+      runs,
+
+      data:
+        runs,
+    })
+  } catch (
+    error: any
+  ) {
+    console.error(
+      '[GET /api/payroll/run]',
+      error
+    )
+
+    return NextResponse.json(
+      {
+        success:
+          false,
+
+        error:
+          error?.message ||
+          'Unable to load payroll runs.',
+      },
+      {
+        status:
+          500,
+      }
+    )
+  }
+}
+
+// ============================================================
+// CREATE / CALCULATE PAYROLL RUN
+// ============================================================
+
+export async function POST(
+  request: Request
+) {
+  try {
+    // ========================================================
+    // AUTHORIZATION
+    // ========================================================
+
+    const auth =
+      await resolveRequestContext()
+
+    if (!auth.ok) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            auth.error.message,
+        },
+        {
+          status:
+            auth.error.status,
+        }
+      )
+    }
+
+    if (
+      !hasRole(
+        auth.context,
+        'SUPER_ADMIN',
+        'HR_ADMIN',
+        'PAYROLL_ADMIN'
+      )
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            'Unauthorized',
+        },
+        {
+          status:
+            403,
+        }
+      )
+    }
+
+    const {
+      companyId,
+      authUserId,
+      email,
+      fullName,
+    } =
+      auth.context
+
+    // ========================================================
+    // REQUEST / EMPLOYEE SELECTION
+    // ========================================================
+
+    const body =
+      await request.json()
+
+    const payrollPeriodId =
+      body.payroll_period_id
+
+    if (
+      !payrollPeriodId
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            'Missing payroll_period_id.',
+        },
+        {
+          status:
+            400,
+        }
+      )
+    }
+
+    /**
+     * Supports:
+     *
+     * Single employee:
+     * {
+     *   payroll_period_id: "...",
+     *   employee_id: "..."
+     * }
+     *
+     * Multiple selected employees:
+     * {
+     *   payroll_period_id: "...",
+     *   employee_ids: ["...", "..."]
+     * }
+     *
+     * Legacy:
+     * {
+     *   payroll_period_id: "..."
+     * }
+     * -> all active employees
+     */
+    const selection =
+      normalizeSelection(
+        body
+      )
+
+    const admin =
+      createAdminClient()
+
+    if (!admin) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            'Database unavailable.',
+        },
+        {
+          status:
+            503,
+        }
+      )
+    }
+
+    // ========================================================
+    // PAYROLL PERIOD
+    // ========================================================
+
+    const {
+      data:
+        period,
+
+      error:
+        periodError,
+    } =
+      await admin
+        .from(
+          'payroll_periods'
+        )
+        .select('*')
+        .eq(
+          'id',
+          payrollPeriodId
+        )
+        .eq(
+          'company_id',
+          companyId
+        )
+        .single()
+
+    if (
+      periodError ||
+      !period
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            'Payroll period not found.',
+        },
+        {
+          status:
+            404,
+        }
+      )
+    }
+
+    const periodStart =
+      normalizeDateOnly(
+        period.start_date
+      )
+
+    const periodEnd =
+      normalizeDateOnly(
+        period.end_date
+      )
+
+    if (
+      !periodStart ||
+      !periodEnd
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            'Payroll period contains invalid start or end dates.',
+        },
+        {
+          status:
+            400,
+        }
+      )
+    }
+
+    // ========================================================
+    // PAYROLL SETTINGS
+    // ========================================================
+
+    const {
+      data:
+        settings,
+
+      error:
+        settingsError,
+    } =
+      await admin
+        .from(
+          'payroll_settings'
+        )
+        .select('*')
+        .eq(
+          'company_id',
+          companyId
+        )
+        .maybeSingle()
+
+    if (
+      settingsError
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            `Payroll settings could not be loaded: ${settingsError.message}`,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    const payrollSettings =
+      settings || {
+        pf_employee_contribution_rate:
+          12,
+
+        pf_employer_contribution_rate:
+          12,
+
+        pf_wage_ceiling:
+          15000,
+
+        esi_employee_rate:
+          0.75,
+
+        esi_employer_rate:
+          3.25,
+
+        esi_wage_ceiling:
+          21000,
+      }
+
+    const weeklyOffs =
+      normalizeWeeklyOffs(
+        payrollSettings
+      )
+
+    // ========================================================
+    // STATUTORY RULES
+    // ========================================================
+
+    const {
+      data:
+        statutoryRules,
+
+      error:
+        statutoryRuleError,
+    } =
+      await admin
+        .from(
+          'statutory_rules'
+        )
+        .select('*')
+        .eq(
+          'company_id',
+          companyId
+        )
+        .eq(
+          'is_active',
+          true
+        )
+
+    if (
+      statutoryRuleError
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            statutoryRuleError.message,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    // ========================================================
+    // COMPANY HOLIDAYS
+    // ========================================================
+
+    const {
+      data:
+        holidays,
+
+      error:
+        holidayError,
+    } =
+      await admin
+        .from(
+          'holidays'
+        )
+        .select('*')
+        .eq(
+          'company_id',
+          companyId
+        )
+
+    if (
+      holidayError
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            `Company holidays could not be loaded: ${holidayError.message}`,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    const holidayDates =
+      getHolidayDatesForPeriod(
+        holidays || [],
+        periodStart,
+        periodEnd
+      )
+
+    const workingDates =
+      getWorkingDatesForPeriod(
+        periodStart,
+        periodEnd,
+        weeklyOffs,
+        holidayDates
+      )
+
+    const invalidWorkingDates =
+      workingDates.filter(
+        date =>
+          !isDateInsidePeriod(
+            date,
+            periodStart,
+            periodEnd
+          )
+      )
+
+    if (
+      invalidWorkingDates.length >
+      0
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            `Payroll working-day generation produced dates outside the payroll period: ${invalidWorkingDates.join(', ')}`,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    // ========================================================
+    // LEAVE TYPES
+    // ========================================================
+
+    const {
+      data:
+        leaveTypes,
+
+      error:
+        leaveTypeError,
+    } =
+      await admin
+        .from(
+          'leave_types'
+        )
+        .select('*')
+        .eq(
+          'company_id',
+          companyId
+        )
+
+    if (
+      leaveTypeError
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            `Leave types could not be loaded: ${leaveTypeError.message}`,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    const leaveTypesById =
+      new Map<
+        string,
+        any
+      >()
+
+    for (
+      const leaveType of
+        leaveTypes || []
+    ) {
+      if (
+        leaveType.id
+      ) {
+        leaveTypesById.set(
+          leaveType.id,
+          leaveType
+        )
+      }
+    }
+
+    // ========================================================
+    // CREATE PAYROLL RUN
+    // ========================================================
+
+    const {
+      data:
+        run,
+
+      error:
+        runError,
+    } =
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .insert({
+          company_id:
+            companyId,
+
+          payroll_period_id:
+            period.id,
+
+          status:
+            'calculating',
+
+          created_by:
+            authUserId,
+        })
+        .select()
+        .single()
+
+    if (
+      runError ||
+      !run
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            runError?.message ||
+            'Unable to create payroll run.',
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    // ========================================================
+    // ACTIVE EMPLOYEES
+    // ========================================================
+
+    let employeeQuery =
+      admin
+        .from(
+          'employees'
+        )
+        .select(`
+          *,
+          departments:department_id(
+            name
+          ),
+          designations:designation_id(
+            name
+          ),
+          employee_statutory_details(*)
+        `)
+        .eq(
+          'company_id',
+          companyId
+        )
+        .eq(
+          'is_active',
+          true
+        )
+        .eq(
+          'employment_status',
+          'active'
+        )
+
+    if (
+      selection.employeeIds
+        .length > 0
+    ) {
+      employeeQuery =
+        employeeQuery.in(
+          'id',
+          selection.employeeIds
+        )
+    }
+
+    const {
+      data:
+        employees,
+
+      error:
+        employeeError,
+    } =
+      await employeeQuery
+
+    if (
+      employeeError
+    ) {
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status:
+            'error',
+        })
+        .eq(
+          'id',
+          run.id
+        )
+
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            employeeError.message,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    if (
+      !employees ||
+      employees.length === 0
+    ) {
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status:
+            'error',
+        })
+        .eq(
+          'id',
+          run.id
+        )
+
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            selection.mode ===
+              'ALL'
+              ? 'No active employees are available for this payroll period.'
+              : 'None of the selected employees are active and eligible for this payroll period.',
+        },
+        {
+          status:
+            400,
+        }
+      )
+    }
+
+    const processingEmployeeIds =
+      employees.map(
+        (
+          employee: any
+        ) =>
+          employee.id
+      )
+
+    // ========================================================
+    // LEAVE REQUESTS FOR THIS PAYROLL POPULATION
+    // ========================================================
+
+    let leaveRequestQuery =
+      admin
+        .from(
+          'leave_requests'
+        )
+        .select('*')
+        .eq(
+          'company_id',
+          companyId
+        )
+
+    if (
+      processingEmployeeIds
+        .length > 0
+    ) {
+      leaveRequestQuery =
+        leaveRequestQuery.in(
+          'employee_id',
+          processingEmployeeIds
+        )
+    }
+
+    const {
+      data:
+        companyLeaveRequests,
+
+      error:
+        leaveRequestError,
+    } =
+      await leaveRequestQuery
+
+    if (
+      leaveRequestError
+    ) {
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status:
+            'error',
+        })
+        .eq(
+          'id',
+          run.id
+        )
+
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            `Leave requests could not be loaded: ${leaveRequestError.message}`,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    const leavesByEmployee =
+      new Map<
+        string,
+        any[]
+      >()
+
+    for (
+      const leave of
+        companyLeaveRequests || []
+    ) {
+      const employeeId =
+        leave.employee_id
+
+      if (!employeeId) {
+        continue
+      }
+
+      const current =
+        leavesByEmployee.get(
+          employeeId
+        ) || []
+
+      current.push(
+        leave
+      )
+
+      leavesByEmployee.set(
+        employeeId,
+        current
+      )
+    }
+
+    // ========================================================
+    // ATTENDANCE FOR THIS PAYROLL POPULATION
+    // ========================================================
+
+    let attendanceQuery =
+      admin
+        .from(
+          'attendance_records'
+        )
+        .select('*')
+        .eq(
+          'company_id',
+          companyId
+        )
+        .gte(
+          'attendance_date',
+          periodStart
+        )
+        .lte(
+          'attendance_date',
+          periodEnd
+        )
+
+    if (
+      processingEmployeeIds
+        .length > 0
+    ) {
+      attendanceQuery =
+        attendanceQuery.in(
+          'employee_id',
+          processingEmployeeIds
+        )
+    }
+
+    const {
+      data:
+        companyAttendance,
+
+      error:
+        attendanceError,
+    } =
+      await attendanceQuery
+
+    if (
+      attendanceError
+    ) {
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status:
+            'error',
+        })
+        .eq(
+          'id',
+          run.id
+        )
+
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            `Attendance could not be loaded: ${attendanceError.message}`,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    const attendanceByEmployee =
+      new Map<
+        string,
+        any[]
+      >()
+
+    for (
+      const attendance of
+        companyAttendance || []
+    ) {
+      const employeeId =
+        attendance.employee_id
+
+      if (!employeeId) {
+        continue
+      }
+
+      const current =
+        attendanceByEmployee.get(
+          employeeId
+        ) || []
+
+      current.push(
+        attendance
+      )
+
+      attendanceByEmployee.set(
+        employeeId,
+        current
+      )
+    }
+
+    // ========================================================
+    // APPROVED / LOCKED TIMESHEETS + ENTRIES
+    // ========================================================
+
+    let timesheetQuery =
+      admin
+        .from(
+          'timesheets'
+        )
+        .select(`
+          id,
+          employee_id,
+          status,
+          year,
+          month,
+          timesheet_entries(*)
+        `)
+        .eq(
+          'company_id',
+          companyId
+        )
+        .eq(
+          'year',
+          period.period_year
+        )
+        .eq(
+          'month',
+          period.period_month
+        )
+        .in(
+          'status',
+          [
+            'APPROVED',
+            'LOCKED',
+          ]
+        )
+
+    if (
+      processingEmployeeIds
+        .length > 0
+    ) {
+      timesheetQuery =
+        timesheetQuery.in(
+          'employee_id',
+          processingEmployeeIds
+        )
+    }
+
+    const {
+      data:
+        approvedTimesheets,
+
+      error:
+        timesheetLoadError,
+    } =
+      await timesheetQuery
+
+    if (
+      timesheetLoadError
+    ) {
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status:
+            'error',
+        })
+        .eq(
+          'id',
+          run.id
+        )
+
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            `Approved timesheets could not be loaded: ${timesheetLoadError.message}`,
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    const timesheetByEmployee =
+      new Map<
+        string,
+        any
+      >()
+
+    for (
+      const timesheet of
+        approvedTimesheets || []
+    ) {
+      if (
+        timesheet.employee_id
+      ) {
+        timesheetByEmployee.set(
+          timesheet.employee_id,
+          timesheet
+        )
+      }
+    }
+
+    // ========================================================
+    // AGGREGATION
+    // ========================================================
+
+    let calculatedEmployees =
+      0
+
+    let blockedEmployees =
+      0
+
+    let totalGross =
+      0
+
+    let totalDeductionsRun =
+      0
+
+    let totalNet =
+      0
+
+    const allRecords:
+      any[] = []
+
+    const allEarnings:
+      any[] = []
+
+    const allDeductions:
+      any[] = []
+
+    // ========================================================
+    // EMPLOYEE CALCULATION LOOP
+    // ========================================================
+
+    for (
+      const employee of
+        employees
+    ) {
+      // ======================================================
+      // 1. CANONICAL COMPENSATION
+      // ======================================================
+
+      const compensation =
+        await getEffectiveCompensation(
+          employee.id,
+          companyId,
+          period.end_date
+        )
+
+      if (
+        !compensation.isComplete
+      ) {
+        blockedEmployees++
+
+        allRecords.push(
+          buildBlockedPayrollRecord({
+            runId:
+              run.id,
+
+            employee,
+
+            period,
+
+            salaryStructureId:
+              compensation.structureId,
+
+            annualCtc:
+              compensation.annualCtc,
+
+            monthlyGross:
+              compensation.monthlyGross,
+
+            blockerCode:
+              'SALARY_STRUCTURE_INCOMPLETE',
+
+            blockerMessage:
+              compensation.incompletenessReasons[0] ||
+              'Salary structure incomplete. Configure earning components before payroll.',
+
+            warnings:
+              compensation
+                .incompletenessReasons
+                .map(
+                  (
+                    reason
+                  ) => ({
+                    code:
+                      'SALARY_STRUCTURE_INCOMPLETE',
+
+                    message:
+                      reason,
+                  })
+                ),
+
+            components:
+              compensation.components,
+          })
+        )
+
+        continue
+      }
+
+      // ======================================================
+      // 2. TIMESHEET APPROVAL GATE
+      // ======================================================
+
+      const timesheetCheck =
+        await isTimesheetApprovedForPayroll(
+          companyId,
+          employee.id,
+          period.period_year,
+          period.period_month
+        )
+
+      if (
+        !timesheetCheck.approved
+      ) {
+        blockedEmployees++
+
+        allRecords.push(
+          buildBlockedPayrollRecord({
+            runId:
+              run.id,
+
+            employee,
+
+            period,
+
+            salaryStructureId:
+              compensation.structureId,
+
+            annualCtc:
+              compensation.annualCtc,
+
+            monthlyGross:
+              compensation.monthlyGross,
+
+            blockerCode:
+              'TIMESHEET_UNAPPROVED',
+
+            blockerMessage:
+              timesheetCheck.reason ||
+              'Timesheet approval is required before payroll calculation.',
+
+            components:
+              compensation.components,
+          })
+        )
+
+        continue
+      }
+
+      const approvedTimesheet =
+        timesheetByEmployee.get(
+          employee.id
+        )
+
+      const timesheetEntries =
+        approvedTimesheet
+          ?.timesheet_entries ||
+        []
+
+      // ======================================================
+      // 3. SALARY STRUCTURE
+      // ======================================================
+
+      const structure =
+        compensation.rawStructure || {
+          id:
+            compensation.structureId,
+
+          annual_ctc:
+            compensation.annualCtc,
+
+          monthly_gross:
+            compensation.monthlyGross,
+
+          status:
+            compensation.status,
+
+          effective_from:
+            compensation.effectiveFrom,
+
+          effective_until:
+            compensation.effectiveUntil,
+        }
+
+      const annualCTC =
+        compensation.annualCtc
+
+      const monthlyGross =
+        compensation.monthlyGross
+
+      const structureComponents =
+        compensation.components.map(
+          component => ({
+            id:
+              component.id,
+
+            salary_structure_id:
+              compensation.structureId!,
+
+            component_id:
+              component.componentId,
+
+            monthly_amount:
+              component.monthlyAmount,
+
+            annual_amount:
+              component.annualAmount,
+
+            is_active:
+              component.isActive,
+
+            component: {
+              id:
+                component.componentId,
+
+              name:
+                component.name,
+
+              code:
+                component.code,
+
+              type:
+                component.type,
+
+              category:
+                component.category,
+
+              is_taxable:
+                component.isTaxable,
+
+              is_statutory:
+                component.isStatutory,
+
+              sort_order:
+                component.sortOrder,
+
+              is_active:
+                component.isActive,
+            },
+          })
+        )
+
+      // ======================================================
+      // 4. ATTENDANCE + LEAVE
+      // ======================================================
+
+      const employeeAttendance =
+        attendanceByEmployee.get(
+          employee.id
+        ) || []
+
+      const employeeLeaves =
+        leavesByEmployee.get(
+          employee.id
+        ) || []
+
+      const dayResolution =
+        resolvePayrollDays({
+          attendance:
+            employeeAttendance,
+
+          leaves:
+            employeeLeaves,
+
+          leaveTypesById,
+
+          holidayDates,
+
+          weeklyOffs,
+
+          periodStart,
+
+          periodEnd,
+        })
+
+      // ======================================================
+      // 5. TIMESHEET DATE RECONCILIATION
+      // ======================================================
+
+      const reconciliation =
+        reconcileTimesheetDates({
+          workingDates,
+
+          timesheetEntries,
+
+          paidLeaveDates:
+            dayResolution
+              .paidLeaveDates,
+
+          unpaidLeaveDates:
+            dayResolution
+              .unpaidLeaveDates,
+
+          joiningDate:
+            employee.joining_date,
+
+          lastWorkingDate:
+            employee.last_working_date,
+        })
+
+      /**
+       * CRITICAL:
+       *
+       * A missing timesheet date is NOT automatically LOP.
+       *
+       * It becomes UNRESOLVED and blocks payroll until HR resolves it.
+       */
+      if (
+        reconciliation
+          .unresolvedDates
+          .length > 0
+      ) {
+        blockedEmployees++
+
+        const unresolvedCount =
+          reconciliation
+            .unresolvedDates
+            .length
+
+        allRecords.push(
+          buildBlockedPayrollRecord({
+            runId:
+              run.id,
+
+            employee,
+
+            period,
+
+            salaryStructureId:
+              compensation.structureId,
+
+            annualCtc:
+              annualCTC,
+
+            monthlyGross,
+
+            blockerCode:
+              'UNRESOLVED_WORKING_DAYS',
+
+            blockerMessage:
+              `${unresolvedCount} working day(s) are unresolved. Every working day must be covered by timesheet work, approved paid leave, or approved LOP before payroll can be calculated.`,
+
+            warnings: [
+              ...dayResolution
+                .warnings,
+
+              {
+                code:
+                  'UNRESOLVED_WORKING_DAYS',
+
+                message:
+                  `Unresolved dates: ${reconciliation.unresolvedDates.join(', ')}`,
+              },
+            ],
+
+            components:
+              compensation.components,
+
+            calculationDetails: {
+              timesheetApproved:
+                true,
+
+              timesheetReconciliation: {
+                workedDates:
+                  reconciliation
+                    .workedDates,
+
+                workedDays:
+                  reconciliation
+                    .workedDates
+                    .length,
+
+                paidLeaveDates:
+                  reconciliation
+                    .paidLeaveDates,
+
+                paidLeaveDays:
+                  reconciliation
+                    .paidLeaveDates
+                    .length,
+
+                unpaidLeaveDates:
+                  reconciliation
+                    .unpaidLeaveDates,
+
+                lopDays:
+                  reconciliation
+                    .unpaidLeaveDates
+                    .length,
+
+                unresolvedDates:
+                  reconciliation
+                    .unresolvedDates,
+
+                unresolvedDays:
+                  unresolvedCount,
+              },
+            },
+          })
+        )
+
+        continue
+      }
+
+      // ======================================================
+      // 6. PAID DAYS / LOP
+      // ======================================================
+
+      const paidDaysResult =
+        calculatePaidDays({
+          periodStartDate:
+            period.start_date,
+
+          periodEndDate:
+            period.end_date,
+
+          joiningDate:
+            employee.joining_date,
+
+          lastWorkingDate:
+            employee.last_working_date,
+
+          lopDays:
+            dayResolution.lopDays,
+
+          holidays:
+            holidayDates,
+
+          weeklyOffs,
+
+          policy:
+            'WORKING_DAYS',
+        })
+
+      const calendarDays =
+        paidDaysResult.calendarDays
+
+      const workingDays =
+        paidDaysResult.workingDays
+
+      const paidDays =
+        paidDaysResult.paidDays
+
+      const finalLopDays =
+        paidDaysResult.lopDays
+
+      // ======================================================
+      // 7. STATUTORY DETAILS
+      // ======================================================
+
+      const statutory =
+        normalizeStatutoryDetails(
+          employee
+            .employee_statutory_details
+        )
+
+      // ======================================================
+      // 8. PAYROLL INPUT
+      // ======================================================
+
+      const input:
+        PayrollInput = {
+        employee,
+
+        salaryStructure:
+          structure,
+
+        salaryComponents:
+          structureComponents as any,
+
+        period,
+
+        settings:
+          payrollSettings,
+
+        statutoryRules:
+          statutoryRules ||
+          [],
+
+        calendarDays,
+
+        workingDays,
+
+        paidDays,
+
+        lopDays:
+          finalLopDays,
+
+        /**
+         * TODO:
+         * Replace with approved historical payroll aggregation.
+         */
+        ytdGrossEarnings:
+          0,
+
+        ytdPfContribution:
+          0,
+
+        ytdProfessionalTax:
+          0,
+
+        ytdIncomeTax:
+          0,
+
+        ytdNetPay:
+          0,
+
+        pfApplicable:
+          statutory
+            .pf_applicable,
+
+        esiApplicable:
+          statutory
+            .esi_applicable,
+
+        ptApplicable:
+          statutory
+            .pt_applicable,
+
+        ptState:
+          statutory.pt_state ||
+          '',
+
+        ptAmount:
+          statutory.pt_amount,
+
+        pfAmount:
+          statutory.pf_amount,
+
+        taxRegime:
+          (
+            statutory.tax_regime ||
+            'new'
+          ) as
+            | 'old'
+            | 'new',
+
+        annualCTC,
+      }
+
+      // ======================================================
+      // 9. DETERMINISTIC CALCULATION
+      // ======================================================
+
+      const result =
+        calculatePayroll(
+          input
+        )
+
+      result.warnings.push(
+        ...dayResolution.warnings
+      )
+
+      const calculatedDeductionSum =
+        result.deductions.reduce(
+          (
+            total,
+            deduction
+          ) =>
+            total +
+            Number(
+              deduction.amount ||
+                0
+            ),
+          0
+        )
+
+      if (
+        Math.abs(
+          calculatedDeductionSum -
+            result.totalDeductions
+        ) > 0.01
+      ) {
+        result.errors.push({
+          code:
+            'DEDUCTION_RECONCILIATION_ERROR',
+
+          message:
+            `Sum of deductions (₹${calculatedDeductionSum.toLocaleString(
+              'en-IN'
+            )}) does not equal total deductions (₹${result.totalDeductions.toLocaleString(
+              'en-IN'
+            )}).`,
+        })
+      }
+
+      if (
+        result.grossEarnings < 0
+      ) {
+        result.errors.push({
+          code:
+            'NEGATIVE_GROSS',
+
+          message:
+            'Calculated gross earnings cannot be negative.',
+        })
+      }
+
+      if (
+        result.netSalary < 0
+      ) {
+        result.errors.push({
+          code:
+            'NEGATIVE_NET_PAY',
+
+          message:
+            'Calculated net salary cannot be negative.',
+        })
+      }
+
+      // ======================================================
+      // 10. TOTALS
+      // ======================================================
+
+      calculatedEmployees++
+
+      totalGross +=
+        Number(
+          result.grossEarnings ||
+            0
+        )
+
+      totalDeductionsRun +=
+        Number(
+          result.totalDeductions ||
+            0
+        )
+
+      totalNet +=
+        Number(
+          result.netSalary ||
+            0
+        )
+
+      // ======================================================
+      // 11. EMPLOYEE RECORD
+      // ======================================================
+
+      const employeeRecordId =
+        crypto.randomUUID()
+
+      allRecords.push({
+        id:
+          employeeRecordId,
+
+        payroll_run_id:
+          run.id,
+
+        employee_id:
+          employee.id,
+
+        employee_code:
+          employee.employee_code,
+
+        employee_name:
+          employee.full_name,
+
+        department_name:
+          employee
+            .departments?.name ||
+          '',
+
+        designation_name:
+          employee
+            .designations?.name ||
+          '',
+
+        joining_date:
+          employee.joining_date,
+
+        salary_structure_id:
+          compensation.structureId,
+
+        annual_ctc:
+          annualCTC,
+
+        monthly_gross_entitlement:
+          monthlyGross,
+
+        calendar_days:
+          calendarDays,
+
+        working_days:
+          workingDays,
+
+        paid_days:
+          paidDays,
+
+        lop_days:
+          finalLopDays,
+
+        gross_earnings:
+          result.grossEarnings,
+
+        total_deductions:
+          result.totalDeductions,
+
+        net_salary:
+          result.netSalary,
+
+        status:
+          result.errors.length >
+          0
+            ? 'error'
+            : 'calculated',
+
+        warnings:
+          result.warnings,
+
+        errors:
+          result.errors,
+
+        calculation_details: {
+          ...result
+            .calculationDetails,
+
+          compensationSource:
+            'salary_structure_components',
+
+          annualCtc:
+            annualCTC,
+
+          monthlyGrossEntitlement:
+            monthlyGross,
+
+          compensationComponents:
+            compensation.components,
+
+          timesheetApproved:
+            true,
+
+          payrollSelection: {
+            mode:
+              selection.mode,
+
+            selectedEmployeeIds:
+              selection.employeeIds,
+          },
+
+          timesheetReconciliation: {
+            workedDates:
+              reconciliation
+                .workedDates,
+
+            workedDays:
+              reconciliation
+                .workedDates
+                .length,
+
+            paidLeaveDates:
+              reconciliation
+                .paidLeaveDates,
+
+            paidLeaveDays:
+              reconciliation
+                .paidLeaveDates
+                .length,
+
+            unpaidLeaveDates:
+              reconciliation
+                .unpaidLeaveDates,
+
+            unresolvedDates:
+              reconciliation
+                .unresolvedDates,
+
+            unresolvedDays:
+              reconciliation
+                .unresolvedDates
+                .length,
+          },
+
+          payrollDayEvidence: {
+            weeklyOffs,
+
+            holidays:
+              dayResolution.holidays,
+
+            approvedPaidLeaveDates:
+              dayResolution
+                .paidLeaveDates,
+
+            approvedUnpaidLeaveDates:
+              dayResolution
+                .unpaidLeaveDates,
+
+            attendanceLopDates:
+              dayResolution
+                .attendanceLopDates,
+
+            unknownApprovedLeaveDates:
+              dayResolution
+                .unknownLeaveDates,
+
+            finalLopDays,
+
+            perDayGrossRate:
+              result.perDayGrossRate,
+
+            lopDeduction:
+              result.lopDeduction,
+
+            proratedFixedGross:
+              result.proratedFixedGross,
+          },
+        },
+      })
+
+      // ======================================================
+      // 12. EARNINGS
+      // ======================================================
+
+      result.earnings.forEach(
+        earning => {
+          allEarnings.push({
+            payroll_employee_record_id:
+              employeeRecordId,
+
+            component_id:
+              earning.componentId ||
+              null,
+
+            component_name:
+              earning.componentName,
+
+            component_code:
+              earning.componentCode,
+
+            monthly_entitlement:
+              earning.monthlyEntitlement,
+
+            paid_day_factor:
+              earning.paidDayFactor,
+
+            adjustment:
+              earning.adjustment,
+
+            final_amount:
+              earning.finalAmount,
+
+            is_taxable:
+              earning.isTaxable,
+
+            sort_order:
+              earning.sortOrder,
+
+            calculation_breakdown:
+              earning
+                .calculationBreakdown,
+          })
+        }
+      )
+
+      // ======================================================
+      // 13. DEDUCTIONS
+      // ======================================================
+
+      result.deductions.forEach(
+        deduction => {
+          allDeductions.push({
+            payroll_employee_record_id:
+              employeeRecordId,
+
+            component_id:
+              deduction.componentId ||
+              null,
+
+            component_name:
+              deduction.componentName,
+
+            component_code:
+              deduction.componentCode,
+
+            amount:
+              deduction.amount,
+
+            is_statutory:
+              deduction.isStatutory,
+
+            sort_order:
+              deduction.sortOrder,
+
+            calculation_breakdown:
+              deduction
+                .calculationBreakdown,
+          })
+        }
+      )
+    }
+
+    // ========================================================
+    // PERSIST EMPLOYEE RECORDS
+    // ========================================================
+
+    if (
+      allRecords.length > 0
+    ) {
+      const {
+        error:
+          recordInsertError,
+      } =
+        await admin
+          .from(
+            'payroll_employee_records'
+          )
+          .insert(
+            allRecords
+          )
+
+      if (
+        recordInsertError
+      ) {
+        await admin
+          .from(
+            'payroll_runs'
+          )
+          .update({
+            status:
+              'error',
+          })
+          .eq(
+            'id',
+            run.id
+          )
+
+        return NextResponse.json(
+          {
+            success:
+              false,
+
+            error:
+              `Payroll employee records could not be saved: ${recordInsertError.message}`,
+          },
+          {
+            status:
+              500,
+          }
+        )
+      }
+    }
+
+    // ========================================================
+    // PERSIST EARNINGS
+    // ========================================================
+
+    if (
+      allEarnings.length > 0
+    ) {
+      const {
+        error:
+          earningsInsertError,
+      } =
+        await admin
+          .from(
+            'payroll_earnings'
+          )
+          .insert(
+            allEarnings
+          )
+
+      if (
+        earningsInsertError
+      ) {
+        await admin
+          .from(
+            'payroll_runs'
+          )
+          .update({
+            status:
+              'error',
+          })
+          .eq(
+            'id',
+            run.id
+          )
+
+        return NextResponse.json(
+          {
+            success:
+              false,
+
+            error:
+              `Payroll earnings could not be saved: ${earningsInsertError.message}`,
+          },
+          {
+            status:
+              500,
+          }
+        )
+      }
+    }
+
+    // ========================================================
+    // PERSIST DEDUCTIONS
+    // ========================================================
+
+    if (
+      allDeductions.length > 0
+    ) {
+      const {
+        error:
+          deductionsInsertError,
+      } =
+        await admin
+          .from(
+            'payroll_deductions'
+          )
+          .insert(
+            allDeductions
+          )
+
+      if (
+        deductionsInsertError
+      ) {
+        await admin
+          .from(
+            'payroll_runs'
+          )
+          .update({
+            status:
+              'error',
+          })
+          .eq(
+            'id',
+            run.id
+          )
+
+        return NextResponse.json(
+          {
+            success:
+              false,
+
+            error:
+              `Payroll deductions could not be saved: ${deductionsInsertError.message}`,
+          },
+          {
+            status:
+              500,
+          }
+        )
+      }
+    }
+
+    // ========================================================
+    // FINALIZE RUN
+    // ========================================================
+
+    const {
+      data:
+        updatedRun,
+
+      error:
+        runUpdateError,
+    } =
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status:
+            'review',
+
+          total_employees:
+            calculatedEmployees,
+
+          total_gross:
+            totalGross,
+
+          total_deductions:
+            totalDeductionsRun,
+
+          total_net:
+            totalNet,
+
+          calculated_at:
+            new Date()
+              .toISOString(),
+
+          calculated_by:
+            authUserId,
+        })
+        .eq(
+          'id',
+          run.id
+        )
+        .select()
+        .single()
+
+    if (
+      runUpdateError ||
+      !updatedRun
+    ) {
+      return NextResponse.json(
+        {
+          success:
+            false,
+
+          error:
+            runUpdateError?.message ||
+            'Payroll run could not be finalized.',
+        },
+        {
+          status:
+            500,
+        }
+      )
+    }
+
+    // ========================================================
+    // AUDIT
+    // ========================================================
+
+    await createAuditLog({
+      companyId,
+
+      userId:
+        authUserId,
+
+      userEmail:
+        email,
+
+      userName:
+        fullName,
+
+      action:
+        'generated',
+
+      entityType:
+        'payroll_run',
+
+      entityId:
+        run.id,
+
+      description:
+        `Generated payroll run for ${period.period_month}/${period.period_year}. ` +
+        `Selection mode: ${selection.mode}. ` +
+        `Selected/processed employees: ${employees.length}. ` +
+        `Calculated: ${calculatedEmployees}. ` +
+        `Blocked: ${blockedEmployees}.`,
+    })
+
+    // ========================================================
+    // RESPONSE
+    // ========================================================
+
+    return NextResponse.json(
+      {
+        success:
+          true,
+
+        data:
+          updatedRun,
+
+        run:
+          updatedRun,
+
+        selection: {
+          mode:
+            selection.mode,
+
+          requestedEmployeeIds:
+            selection.employeeIds,
+
+          processedEmployeeIds:
+            processingEmployeeIds,
+        },
+
+        summary: {
+          selectedEmployees:
+            employees.length,
+
+          calculatedEmployees,
+
+          blockedEmployees,
+
+          totalEmployeesProcessed:
+            allRecords.length,
+
+          totalGross,
+
+          totalDeductions:
+            totalDeductionsRun,
+
+          totalNet,
+        },
+
+        records:
+          allRecords,
+
+        earnings:
+          allEarnings,
+
+        deductions:
+          allDeductions,
+      },
+      {
+        status:
+          201,
+      }
+    )
+  } catch (
+    error: any
+  ) {
+    console.error(
+      '[POST /api/payroll/run]',
+      error
+    )
+
+    return NextResponse.json(
+      {
+        success:
+          false,
+
+        error:
+          error?.message ||
+          'Payroll calculation failed.',
+      },
+      {
+        status:
+          500,
+      }
+    )
+  }
+}
