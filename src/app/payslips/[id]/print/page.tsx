@@ -55,7 +55,7 @@ export default function PayslipPrintPage() {
         const reconstructed: PayslipData = {
           companyName: 'Haryak Technologies India Private Limited',
           companyTagline: "Empowering Tomorrow's Solutions, Today",
-          companyLogoUrl: '/letterhead/header.png',
+          companyLogoUrl: '/logo.jpg',
           companyWebsite: 'https://haryak.com',
           employeeName: empName,
           employeeId: empCode,
