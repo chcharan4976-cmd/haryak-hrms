@@ -1,21 +1,27 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '@/components/ui/dialog'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Button } from '@/components/ui/button'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Loader2, AlertTriangle, ShieldAlert, UserX, Trash2 } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  AlertTriangle,
+  Loader2,
+  ShieldAlert,
+  Trash2,
+  UserX,
+} from 'lucide-react'
 import { toast } from 'sonner'
 
 interface DeleteEmployeeDialogProps {
@@ -31,15 +37,25 @@ export function DeleteEmployeeDialog({
   employee,
   onSuccess,
 }: DeleteEmployeeDialogProps) {
-  const [actionType, setActionType] = useState<'deactivate' | 'delete'>('deactivate')
+  const [actionType, setActionType] =
+    useState<'deactivate' | 'delete'>('deactivate')
+
   const [reason, setReason] = useState('')
   const [confirmationCode, setConfirmationCode] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [checking, setChecking] = useState(false)
   const [eligibility, setEligibility] = useState<any>(null)
 
-  const employeeCode = employee?.code || employee?.employee_code || ''
-  const employeeName = employee?.fullName || employee?.name || ''
+  const employeeCode =
+    employee?.code ||
+    employee?.employee_code ||
+    ''
+
+  const employeeName =
+    employee?.fullName ||
+    employee?.name ||
+    ''
+
   const requiredCode = `DELETE ${employeeCode}`
 
   useEffect(() => {
@@ -47,20 +63,28 @@ export function DeleteEmployeeDialog({
       setReason('')
       setConfirmationCode('')
       setActionType('deactivate')
-      fetchEligibility()
+      setEligibility(null)
+      void fetchEligibility()
     }
   }, [open, employee?.id])
 
   const fetchEligibility = async () => {
+    if (!employee?.id) return
+
     setChecking(true)
+
     try {
-      const res = await fetch(`/api/employees/${employee.id}/delete-eligibility`)
+      const res = await fetch(
+        `/api/employees/${employee.id}/delete-eligibility`,
+      )
+
       const data = await res.json()
+
       if (data.success) {
         setEligibility(data)
       }
     } catch {
-      // Ignore
+      // Keep dialog usable even if eligibility check fails.
     } finally {
       setChecking(false)
     }
@@ -73,22 +97,36 @@ export function DeleteEmployeeDialog({
     }
 
     setSubmitting(true)
+
     try {
-      const res = await fetch(`/api/employees/${employee.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'deactivate',
-          reason: reason.trim(),
-        }),
-      })
+      const res = await fetch(
+        `/api/employees/${employee.id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            action: 'deactivate',
+            reason: reason.trim(),
+          }),
+        },
+      )
+
       const data = await res.json()
+
       if (data.success) {
-        toast.success(`Employee ${employeeCode} deactivated successfully.`)
+        toast.success(
+          `Employee ${employeeCode} deactivated successfully.`,
+        )
+
         onSuccess?.()
         onOpenChange(false)
       } else {
-        toast.error(data.error || 'Failed to deactivate employee')
+        toast.error(
+          data.error ||
+            'Failed to deactivate employee',
+        )
       }
     } catch {
       toast.error('Network error during deactivation')
@@ -99,32 +137,51 @@ export function DeleteEmployeeDialog({
 
   const handleDelete = async () => {
     if (confirmationCode.trim() !== requiredCode) {
-      toast.error(`Please type "${requiredCode}" exactly to confirm deletion.`)
+      toast.error(
+        `Please type "${requiredCode}" exactly to confirm deletion.`,
+      )
       return
     }
 
     if (!reason.trim()) {
-      toast.error('Please enter a reason for deletion.')
+      toast.error(
+        'Please enter a reason for deletion.',
+      )
       return
     }
 
     setSubmitting(true)
+
     try {
-      const res = await fetch(`/api/employees/${employee.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          confirmationCode: confirmationCode.trim(),
-          reason: reason.trim(),
-        }),
-      })
+      const res = await fetch(
+        `/api/employees/${employee.id}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            confirmationCode:
+              confirmationCode.trim(),
+            reason: reason.trim(),
+          }),
+        },
+      )
+
       const data = await res.json()
+
       if (data.success) {
-        toast.success(`Employee ${employeeCode} permanently deleted.`)
+        toast.success(
+          `Employee ${employeeCode} permanently deleted.`,
+        )
+
         onSuccess?.()
         onOpenChange(false)
       } else {
-        toast.error(data.error || 'Failed to delete employee')
+        toast.error(
+          data.error ||
+            'Failed to delete employee',
+        )
       }
     } catch {
       toast.error('Network error during deletion')
@@ -133,49 +190,147 @@ export function DeleteEmployeeDialog({
     }
   }
 
+  const permanentDeleteBlocked =
+    Boolean(
+      eligibility &&
+        !eligibility.canDeletePermanently,
+    )
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px]">
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+    >
+      <DialogContent
+        className="
+          w-[calc(100vw-2rem)]
+          max-w-[640px]
+          max-h-[90vh]
+          overflow-y-auto
+          overflow-x-hidden
+          sm:max-w-[640px]
+        "
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-rose-600">
-            <ShieldAlert className="h-5 w-5" />
-            Manage Employee Lifecycle & Access
+            <ShieldAlert className="h-5 w-5 shrink-0" />
+
+            <span className="min-w-0">
+              Manage Employee Lifecycle & Access
+            </span>
           </DialogTitle>
-          <DialogDescription>
-            Choose how to handle the record for {employeeName} ({employeeCode})
+
+          <DialogDescription className="break-normal">
+            Choose how to handle the record for{' '}
+            <span className="font-medium text-foreground">
+              {employeeName}
+            </span>{' '}
+            ({employeeCode})
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <RadioGroup
             value={actionType}
-            onValueChange={(v: any) => setActionType(v)}
+            onValueChange={(value) =>
+              setActionType(
+                value as 'deactivate' | 'delete',
+              )
+            }
             className="space-y-3"
           >
-            {/* OPTION 1: DEACTIVATE */}
-            <div className={`flex items-start space-x-3 p-3.5 rounded-lg border cursor-pointer transition-colors ${actionType === 'deactivate' ? 'bg-amber-50/70 border-amber-300 dark:bg-amber-950/30' : 'hover:bg-muted/50'}`}>
-              <RadioGroupItem value="deactivate" id="action-deactivate" className="mt-1" />
-              <div className="space-y-1">
-                <Label htmlFor="action-deactivate" className="font-semibold cursor-pointer flex items-center gap-1.5 text-foreground">
-                  <UserX className="h-4 w-4 text-amber-600" />
-                  Deactivate Employee (Recommended)
+            {/* DEACTIVATE */}
+            <div
+              className={`
+                flex w-full items-start gap-3
+                rounded-xl border p-4
+                transition-colors
+                ${
+                  actionType === 'deactivate'
+                    ? 'border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30'
+                    : 'hover:bg-muted/50'
+                }
+              `}
+            >
+              <RadioGroupItem
+                value="deactivate"
+                id="action-deactivate"
+                className="mt-1 shrink-0"
+              />
+
+              <div className="min-w-0 flex-1">
+                <Label
+                  htmlFor="action-deactivate"
+                  className="
+                    flex cursor-pointer
+                    items-center gap-1.5
+                    font-semibold
+                    text-foreground
+                  "
+                >
+                  <UserX className="h-4 w-4 shrink-0 text-amber-600" />
+
+                  <span>
+                    Deactivate Employee
+                    (Recommended)
+                  </span>
                 </Label>
-                <p className="text-xs text-muted-foreground">
-                  Terminates active employment, disables portal and auth login immediately, but preserves all historical payroll records, payslips, timesheets, and signed documents for statutory compliance.
+
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  Terminates active employment,
+                  disables portal and authentication
+                  login immediately, while preserving
+                  historical payroll records,
+                  payslips, timesheets and issued
+                  documents for statutory compliance.
                 </p>
               </div>
             </div>
 
-            {/* OPTION 2: PERMANENT DELETE */}
-            <div className={`flex items-start space-x-3 p-3.5 rounded-lg border cursor-pointer transition-colors ${actionType === 'delete' ? 'bg-rose-50/70 border-rose-300 dark:bg-rose-950/30' : 'hover:bg-muted/50'}`}>
-              <RadioGroupItem value="delete" id="action-delete" className="mt-1" />
-              <div className="space-y-1">
-                <Label htmlFor="action-delete" className="font-semibold cursor-pointer flex items-center gap-1.5 text-rose-600">
-                  <Trash2 className="h-4 w-4" />
-                  Permanent Delete (Strictly Restricted)
+            {/* PERMANENT DELETE */}
+            <div
+              className={`
+                flex w-full items-start gap-3
+                rounded-xl border p-4
+                transition-colors
+                ${
+                  actionType === 'delete'
+                    ? 'border-rose-300 bg-rose-50/70 dark:border-rose-800 dark:bg-rose-950/30'
+                    : 'hover:bg-muted/50'
+                }
+              `}
+            >
+              <RadioGroupItem
+                value="delete"
+                id="action-delete"
+                className="mt-1 shrink-0"
+              />
+
+              <div className="min-w-0 flex-1">
+                <Label
+                  htmlFor="action-delete"
+                  className="
+                    flex cursor-pointer
+                    items-center gap-1.5
+                    font-semibold
+                    text-rose-600
+                  "
+                >
+                  <Trash2 className="h-4 w-4 shrink-0" />
+
+                  <span>
+                    Permanent Delete
+                    (Strictly Restricted)
+                  </span>
                 </Label>
-                <p className="text-xs text-muted-foreground">
-                  Only permitted for accidental or test employee creations with NO finalized payroll or issued documents. Company employee ID counter will NOT be decremented.
+
+                <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                  Only permitted for accidental or
+                  test employee creations with no
+                  protected payroll, statutory or
+                  issued-document history. The
+                  employee ID counter will not be
+                  decremented.
                 </p>
               </div>
             </div>
@@ -185,13 +340,18 @@ export function DeleteEmployeeDialog({
           {actionType === 'deactivate' && (
             <div className="space-y-3 pt-2">
               <div className="space-y-1.5">
-                <Label htmlFor="deactivate-reason">Reason for Deactivation *</Label>
+                <Label htmlFor="deactivate-reason">
+                  Reason for Deactivation *
+                </Label>
+
                 <Textarea
                   id="deactivate-reason"
                   placeholder="e.g. Resignation, end of contract, termination..."
                   rows={3}
                   value={reason}
-                  onChange={e => setReason(e.target.value)}
+                  onChange={(event) =>
+                    setReason(event.target.value)
+                  }
                 />
               </div>
             </div>
@@ -199,55 +359,188 @@ export function DeleteEmployeeDialog({
 
           {/* PERMANENT DELETE DETAILS */}
           {actionType === 'delete' && (
-            <div className="space-y-3 pt-2">
+            <div className="w-full space-y-3 pt-2">
               {checking ? (
-                <div className="flex items-center justify-center py-4 space-y-2">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                  <span className="text-xs text-muted-foreground ml-2">Checking statutory dependencies...</span>
+                <div className="flex min-h-20 w-full items-center justify-center gap-2 rounded-xl border bg-muted/30 p-4">
+                  <Loader2 className="h-5 w-5 shrink-0 animate-spin text-muted-foreground" />
+
+                  <span className="text-sm text-muted-foreground">
+                    Checking statutory
+                    dependencies...
+                  </span>
                 </div>
-              ) : eligibility && !eligibility.canDeletePermanently ? (
-                <Alert variant="destructive">
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>Permanent Delete Prohibited</AlertTitle>
-                  <AlertDescription className="text-xs mt-1 space-y-1">
-                    <p>This employee cannot be deleted because statutory and historical records exist:</p>
-                    <ul className="list-disc pl-4 space-y-0.5">
-                      {eligibility.blockers?.map((b: string, i: number) => (
-                        <li key={i}>{b}</li>
-                      ))}
-                    </ul>
-                    <p className="font-semibold pt-1">
-                      Please use &quot;Deactivate Employee&quot; instead to preserve statutory compliance.
+              ) : permanentDeleteBlocked ? (
+                /*
+                 * Deliberately NOT using the
+                 * destructive shadcn Alert here.
+                 *
+                 * A normal flex container prevents
+                 * the description from collapsing
+                 * into a narrow text column.
+                 */
+                <div
+                  className="
+                    w-full min-w-0
+                    rounded-xl
+                    border border-rose-300
+                    bg-rose-50
+                    p-4
+                    text-rose-950
+                    dark:border-rose-800
+                    dark:bg-rose-950/30
+                    dark:text-rose-100
+                  "
+                >
+                  <div className="flex w-full min-w-0 items-start gap-3">
+                    <div
+                      className="
+                        flex h-9 w-9 shrink-0
+                        items-center justify-center
+                        rounded-lg
+                        bg-rose-100
+                        dark:bg-rose-900/50
+                      "
+                    >
+                      <AlertTriangle className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <h3 className="text-sm font-semibold leading-5 text-rose-700 dark:text-rose-300">
+                        Permanent Delete Prohibited
+                      </h3>
+
+                      <p className="mt-1.5 text-sm leading-6 text-rose-800 dark:text-rose-200">
+                        This employee cannot be
+                        permanently deleted because
+                        protected statutory or
+                        historical records exist.
+                      </p>
+                    </div>
+                  </div>
+
+                  {Array.isArray(
+                    eligibility?.blockers,
+                  ) &&
+                    eligibility.blockers.length >
+                      0 && (
+                      <div
+                        className="
+                          mt-4 w-full
+                          rounded-lg
+                          border border-rose-200
+                          bg-white/70
+                          p-3.5
+                          dark:border-rose-900
+                          dark:bg-black/10
+                        "
+                      >
+                        <p className="text-xs font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+                          Deletion blocked because
+                        </p>
+
+                        <ul className="mt-2.5 space-y-2">
+                          {eligibility.blockers.map(
+                            (
+                              blocker: string,
+                              index: number,
+                            ) => (
+                              <li
+                                key={index}
+                                className="
+                                  flex min-w-0
+                                  items-start gap-2
+                                  text-sm leading-5
+                                  text-foreground
+                                "
+                              >
+                                <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-rose-500" />
+
+                                <span className="min-w-0 flex-1 break-normal">
+                                  {blocker}
+                                </span>
+                              </li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                    )}
+
+                  <div
+                    className="
+                      mt-4 flex w-full
+                      items-start gap-2.5
+                      rounded-lg
+                      bg-amber-50
+                      p-3
+                      text-amber-950
+                      dark:bg-amber-950/30
+                      dark:text-amber-100
+                    "
+                  >
+                    <UserX className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+
+                    <p className="min-w-0 flex-1 text-sm leading-5">
+                      Use{' '}
+                      <strong>
+                        Deactivate Employee
+                      </strong>{' '}
+                      instead. Deactivation preserves
+                      the employee&apos;s statutory
+                      and historical records while
+                      disabling active employment and
+                      portal access.
                     </p>
-                  </AlertDescription>
-                </Alert>
+                  </div>
+                </div>
               ) : (
                 <>
-                  <Alert className="bg-rose-50 border-rose-200 text-rose-900 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-200">
+                  <Alert className="w-full border-rose-200 bg-rose-50 text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
                     <AlertTriangle className="h-4 w-4 text-rose-600" />
-                    <AlertDescription className="text-xs">
-                      This will permanently remove the employee record, bank accounts, statutory details, and authentication login. This action cannot be undone.
+
+                    <AlertDescription className="text-xs leading-5">
+                      This will permanently remove
+                      the employee record, bank
+                      accounts, statutory details
+                      and authentication login. This
+                      action cannot be undone.
                     </AlertDescription>
                   </Alert>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="delete-reason">Reason for Permanent Deletion *</Label>
+                    <Label htmlFor="delete-reason">
+                      Reason for Permanent Deletion *
+                    </Label>
+
                     <Input
                       id="delete-reason"
                       placeholder="e.g. Accidental duplicate test employee"
                       value={reason}
-                      onChange={e => setReason(e.target.value)}
+                      onChange={(event) =>
+                        setReason(event.target.value)
+                      }
                     />
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label htmlFor="confirm-code" className="text-xs">
-                      Type <span className="font-mono font-bold text-rose-600">{requiredCode}</span> to confirm:
+                    <Label
+                      htmlFor="confirm-code"
+                      className="text-xs"
+                    >
+                      Type{' '}
+                      <span className="font-mono font-bold text-rose-600">
+                        {requiredCode}
+                      </span>{' '}
+                      to confirm:
                     </Label>
+
                     <Input
                       id="confirm-code"
                       value={confirmationCode}
-                      onChange={e => setConfirmationCode(e.target.value)}
+                      onChange={(event) =>
+                        setConfirmationCode(
+                          event.target.value,
+                        )
+                      }
                       placeholder={requiredCode}
                       className="font-mono"
                     />
@@ -258,18 +551,29 @@ export function DeleteEmployeeDialog({
           )}
         </div>
 
-        <DialogFooter className="border-t pt-3">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+        <DialogFooter className="gap-2 border-t pt-4 sm:gap-0">
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={submitting}
+          >
             Cancel
           </Button>
 
           {actionType === 'deactivate' ? (
             <Button
               onClick={handleDeactivate}
-              disabled={submitting || !reason.trim()}
-              className="bg-amber-600 hover:bg-amber-700 text-white"
+              disabled={
+                submitting || !reason.trim()
+              }
+              className="bg-amber-600 text-white hover:bg-amber-700"
             >
-              {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <UserX className="mr-2 h-4 w-4" />}
+              {submitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <UserX className="mr-2 h-4 w-4" />
+              )}
+
               Confirm Deactivation
             </Button>
           ) : (
@@ -278,13 +582,19 @@ export function DeleteEmployeeDialog({
               disabled={
                 submitting ||
                 checking ||
-                (eligibility && !eligibility.canDeletePermanently) ||
-                confirmationCode.trim() !== requiredCode ||
+                permanentDeleteBlocked ||
+                confirmationCode.trim() !==
+                  requiredCode ||
                 !reason.trim()
               }
               variant="destructive"
             >
-              {submitting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+              {submitting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Trash2 className="mr-2 h-4 w-4" />
+              )}
+
               Permanently Delete Employee
             </Button>
           )}

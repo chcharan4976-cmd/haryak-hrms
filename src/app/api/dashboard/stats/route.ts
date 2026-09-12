@@ -1,17 +1,27 @@
 import { NextResponse } from 'next/server'
-import { createAdminClient, isSupabaseConfigured } from '@/lib/supabase/admin'
+import {
+  createAdminClient,
+  isSupabaseConfigured,
+} from '@/lib/supabase/admin'
 import { resolveRequestContext } from '@/lib/services/company-resolver'
 
 export async function GET() {
   try {
     // Resolve authenticated user's company
     const resolution = await resolveRequestContext()
+
     if (!resolution.ok) {
       return NextResponse.json(
-        { success: false, error: resolution.error.message },
-        { status: resolution.error.status }
+        {
+          success: false,
+          error: resolution.error.message,
+        },
+        {
+          status: resolution.error.status,
+        },
       )
     }
+
     const { companyId } = resolution.context
 
     if (!isSupabaseConfigured()) {
@@ -22,6 +32,7 @@ export async function GET() {
     }
 
     const supabase = createAdminClient()
+
     if (!supabase) {
       return NextResponse.json({
         success: true,
@@ -29,111 +40,297 @@ export async function GET() {
       })
     }
 
-    // 1. Employees count — scoped by company_id
-    const { data: emps } = await supabase
+    // ---------------------------------------------------------
+    // 1. ACTIVE EMPLOYEES
+    // ---------------------------------------------------------
+    const { data: emps, error: employeeError } = await supabase
       .from('employees')
-      .select('id, department_id, employment_status, is_active, departments:department_id(name)')
+      .select(
+        `
+        id,
+        department_id,
+        employment_status,
+        is_active,
+        departments:department_id(name)
+      `,
+      )
       .eq('company_id', companyId)
       .eq('is_active', true)
 
-    const employees = emps || []
-    const totalEmployees = employees.length
-    const activeEmployees = employees.filter(
-      (e: any) => e.employment_status === 'active' || e.employment_status === 'probation'
-    ).length
+    if (employeeError) {
+      throw new Error(
+        `Unable to load employees: ${employeeError.message}`,
+      )
+    }
 
-    // Department distribution
+    const employees = emps || []
+
+    const eligibleEmployees = employees.filter(
+      (employee: any) =>
+        employee.employment_status === 'active' ||
+        employee.employment_status === 'probation',
+    )
+
+    const totalEmployees = eligibleEmployees.length
+    const activeEmployees = totalEmployees
+
+    const activeEmployeeIds = new Set(
+      eligibleEmployees.map((employee: any) => employee.id),
+    )
+
+    // ---------------------------------------------------------
+    // 2. DEPARTMENT DISTRIBUTION
+    // ---------------------------------------------------------
     const departmentsMap: Record<string, number> = {}
-    employees.forEach((e: any) => {
-      const deptName = e.departments?.name || 'Unassigned'
-      departmentsMap[deptName] = (departmentsMap[deptName] || 0) + 1
+
+    eligibleEmployees.forEach((employee: any) => {
+      const departmentName =
+        employee.departments?.name || 'Unassigned'
+
+      departmentsMap[departmentName] =
+        (departmentsMap[departmentName] || 0) + 1
     })
 
-    // 2. On leave today — real query
-    const today = new Date().toISOString().split('T')[0]
-    const { data: leaveData } = await supabase
-      .from('leave_requests')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('status', 'approved')
-      .lte('start_date', today)
-      .gte('end_date', today)
+    const departmentList = Object.entries(
+      departmentsMap,
+    ).map(([name, count]) => ({
+      name,
+      count,
+      percentage:
+        totalEmployees > 0
+          ? Math.round((count / totalEmployees) * 100)
+          : 0,
+      color: 'bg-[#1e2a78]',
+    }))
 
-    const onLeaveToday = leaveData?.length || 0
+    // ---------------------------------------------------------
+    // 3. LEAVE TODAY
+    // ---------------------------------------------------------
+    const today = new Date()
+      .toISOString()
+      .split('T')[0]
 
-    // 3. Pending approvals — real query
-    const { data: approvalData } = await supabase
+    let onLeaveToday = 0
+
+    if (totalEmployees > 0) {
+      const { data: leaveData, error: leaveError } =
+        await supabase
+          .from('leave_requests')
+          .select('id, employee_id')
+          .eq('company_id', companyId)
+          .eq('status', 'approved')
+          .lte('start_date', today)
+          .gte('end_date', today)
+
+      if (leaveError) {
+        throw new Error(
+          `Unable to load leave requests: ${leaveError.message}`,
+        )
+      }
+
+      onLeaveToday = (leaveData || []).filter(
+        (leave: any) =>
+          activeEmployeeIds.has(leave.employee_id),
+      ).length
+    }
+
+    // ---------------------------------------------------------
+    // 4. PENDING APPROVALS
+    // ---------------------------------------------------------
+    const {
+      data: approvalData,
+      error: approvalError,
+    } = await supabase
       .from('approval_requests')
       .select('id')
       .eq('company_id', companyId)
       .eq('status', 'pending')
 
-    const pendingApprovals = approvalData?.length || 0
-
-    // 4. Salary totals — scoped by company_id
-    const { data: salaries } = await supabase
-      .from('salary_structures')
-      .select('monthly_gross, employee_id')
-      .eq('company_id', companyId)
-      .eq('status', 'active')
-
-    let estimatedGross = 0
-    if (salaries && salaries.length > 0) {
-      // Only count active employees' salary structures
-      const activeEmpIds = new Set(employees.map((e: any) => e.id))
-      estimatedGross = salaries
-        .filter((s: any) => activeEmpIds.has(s.employee_id))
-        .reduce((sum: number, s: any) => sum + (Number(s.monthly_gross) || 0), 0)
+    if (approvalError) {
+      throw new Error(
+        `Unable to load approval requests: ${approvalError.message}`,
+      )
     }
 
-    // 5. Real deduction estimates from latest payroll run (if exists)
+    const pendingApprovals =
+      approvalData?.length || 0
+
+    // ---------------------------------------------------------
+    // 5. CURRENT ACTIVE SALARY TOTAL
+    // ---------------------------------------------------------
+    let estimatedGross = 0
+
+    if (totalEmployees > 0) {
+      const {
+        data: salaries,
+        error: salaryError,
+      } = await supabase
+        .from('salary_structures')
+        .select('monthly_gross, employee_id')
+        .eq('company_id', companyId)
+        .eq('status', 'active')
+
+      if (salaryError) {
+        throw new Error(
+          `Unable to load salary structures: ${salaryError.message}`,
+        )
+      }
+
+      estimatedGross = (salaries || [])
+        .filter((salary: any) =>
+          activeEmployeeIds.has(salary.employee_id),
+        )
+        .reduce(
+          (sum: number, salary: any) =>
+            sum +
+            (Number(salary.monthly_gross) || 0),
+          0,
+        )
+    }
+
+    // ---------------------------------------------------------
+    // 6. PAYROLL ESTIMATES
+    //
+    // Historical payroll runs must NOT make the dashboard show
+    // payroll values when there are no currently eligible
+    // employees.
+    // ---------------------------------------------------------
     let estimatedDeductions = 0
     let estimatedNet = 0
-    const { data: latestRun } = await supabase
-      .from('payroll_runs')
-      .select('id, total_deductions, total_net, total_gross')
-      .eq('company_id', companyId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
 
-    if (latestRun) {
-      estimatedDeductions = Number(latestRun.total_deductions) || 0
-      estimatedNet = Number(latestRun.total_net) || 0
-      // Use actual payroll gross if available
-      if (Number(latestRun.total_gross) > 0) {
-        estimatedGross = Number(latestRun.total_gross)
+    if (totalEmployees > 0) {
+      const {
+        data: latestRun,
+        error: payrollRunError,
+      } = await supabase
+        .from('payroll_runs')
+        .select(
+          'id, total_deductions, total_net, total_gross',
+        )
+        .eq('company_id', companyId)
+        .order('created_at', {
+          ascending: false,
+        })
+        .limit(1)
+        .maybeSingle()
+
+      if (payrollRunError) {
+        throw new Error(
+          `Unable to load latest payroll run: ${payrollRunError.message}`,
+        )
       }
-    } else {
-      // No payroll run yet — estimate from salary structures
-      // Do NOT use fake formulas. Just show salary total without guessed deductions.
+
+      if (latestRun) {
+        estimatedDeductions =
+          Number(latestRun.total_deductions) || 0
+
+        estimatedNet =
+          Number(latestRun.total_net) || 0
+
+        /*
+         * IMPORTANT:
+         * Do not blindly use an old payroll gross if it belongs
+         * to employees who are no longer part of the active
+         * workforce.
+         *
+         * The salary-structure total above is the safest live
+         * representation of the current eligible workforce.
+         *
+         * Historical payroll runs remain available elsewhere
+         * for audit/history purposes.
+         */
+        if (estimatedGross === 0) {
+          estimatedDeductions = 0
+          estimatedNet = 0
+        }
+      } else {
+        estimatedDeductions = 0
+        estimatedNet = estimatedGross
+      }
+    }
+
+    // Absolute safety rule:
+    // zero eligible workforce = zero current payroll values.
+    if (totalEmployees === 0) {
+      estimatedGross = 0
       estimatedDeductions = 0
+      estimatedNet = 0
+    }
+
+    // If active employees exist but no usable payroll net is
+    // available yet, show current gross as the preliminary net
+    // instead of stale historical data.
+    if (
+      totalEmployees > 0 &&
+      estimatedGross > 0 &&
+      estimatedNet === 0 &&
+      estimatedDeductions === 0
+    ) {
       estimatedNet = estimatedGross
     }
 
-    // 6. Recent audit logs — scoped by company_id
-    const { data: logs } = await supabase
+    // ---------------------------------------------------------
+    // 7. RECENT AUDIT ACTIVITY
+    // ---------------------------------------------------------
+    const {
+      data: logs,
+      error: auditError,
+    } = await supabase
       .from('audit_logs')
-      .select('id, user_name, description, action, entity_type, created_at')
+      .select(
+        `
+        id,
+        user_name,
+        description,
+        action,
+        entity_type,
+        created_at
+      `,
+      )
       .eq('company_id', companyId)
-      .order('created_at', { ascending: false })
+      .order('created_at', {
+        ascending: false,
+      })
       .limit(5)
 
-    const recentAuditLogs = (logs || []).map((l: any) => ({
-      id: l.id,
-      actor: l.user_name || 'System',
-      action: l.description || l.action,
-      target: l.entity_type || 'System',
-      time: new Date(l.created_at).toLocaleTimeString('en-IN', {
-        hour: '2-digit',
-        minute: '2-digit',
-      }),
-    }))
+    if (auditError) {
+      throw new Error(
+        `Unable to load audit logs: ${auditError.message}`,
+      )
+    }
 
-    // 7. Payroll status
-    const currentMonth = new Date().getMonth() + 1
-    const currentYear = new Date().getFullYear()
-    const { data: currentPeriod } = await supabase
+    const recentAuditLogs = (logs || []).map(
+      (log: any) => ({
+        id: log.id,
+        actor: log.user_name || 'System',
+        action:
+          log.description ||
+          log.action ||
+          'Activity',
+        target:
+          log.entity_type || 'System',
+        time: new Date(
+          log.created_at,
+        ).toLocaleTimeString('en-IN', {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+      }),
+    )
+
+    // ---------------------------------------------------------
+    // 8. CURRENT PAYROLL PERIOD STATUS
+    // ---------------------------------------------------------
+    const currentDate = new Date()
+    const currentMonth =
+      currentDate.getMonth() + 1
+    const currentYear =
+      currentDate.getFullYear()
+
+    const {
+      data: currentPeriod,
+      error: periodError,
+    } = await supabase
       .from('payroll_periods')
       .select('id, status')
       .eq('company_id', companyId)
@@ -141,15 +338,20 @@ export async function GET() {
       .eq('period_year', currentYear)
       .maybeSingle()
 
-    const payrollStatus = currentPeriod?.status || (totalEmployees > 0 ? 'NOT_STARTED' : 'NOT_STARTED')
+    if (periodError) {
+      throw new Error(
+        `Unable to load payroll period: ${periodError.message}`,
+      )
+    }
 
-    const departmentList = Object.entries(departmentsMap).map(([name, count]) => ({
-      name,
-      count,
-      percentage: totalEmployees > 0 ? Math.round((count / totalEmployees) * 100) : 0,
-      color: 'bg-[#1e2a78]',
-    }))
+    const payrollStatus =
+      totalEmployees > 0
+        ? currentPeriod?.status || 'NOT_STARTED'
+        : 'NOT_STARTED'
 
+    // ---------------------------------------------------------
+    // RESPONSE
+    // ---------------------------------------------------------
     return NextResponse.json({
       success: true,
       stats: {
@@ -157,17 +359,24 @@ export async function GET() {
         activeEmployees,
         onLeaveToday,
         pendingApprovals,
+
         estimatedGross,
         monthlyPayrollCost: estimatedGross,
         estimatedDeductions,
         estimatedNet,
+
         status: payrollStatus,
+
         departments: departmentList,
         recentActivity: recentAuditLogs,
       },
     })
   } catch (error: any) {
-    console.error('Dashboard stats error:', error)
+    console.error(
+      'Dashboard stats error:',
+      error,
+    )
+
     return NextResponse.json({
       success: false,
       stats: emptyStats(),
@@ -181,10 +390,14 @@ function emptyStats() {
     activeEmployees: 0,
     onLeaveToday: 0,
     pendingApprovals: 0,
+
     estimatedGross: 0,
+    monthlyPayrollCost: 0,
     estimatedDeductions: 0,
     estimatedNet: 0,
+
     status: 'NOT_STARTED',
+
     departments: [],
     recentActivity: [],
   }
