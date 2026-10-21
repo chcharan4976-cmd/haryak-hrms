@@ -194,7 +194,7 @@ export async function POST(request: Request) {
   let supabase: any = null
 
   try {
-    // Resolve authenticated user's company — do NOT trust client-supplied company_id
+    // Resolve authenticated user's company â€” do NOT trust client-supplied company_id
     const resolution = await resolveRequestContext()
     if (!resolution.ok) {
       return NextResponse.json(
@@ -227,7 +227,11 @@ export async function POST(request: Request) {
       annualCtc,
       monthlyGross: inputMonthlyGross,
       components,
+      pfApplicable,
+      ptApplicable,
       ptDeduction,
+      ptState,
+      esiApplicable,
       pan,
       // Bank details (optional)
       bankName,
@@ -236,7 +240,7 @@ export async function POST(request: Request) {
       accountHolderName,
     } = body
 
-    // Validation — require explicit values, no defaults
+    // Validation â€” require explicit values, no defaults
     if (!firstName?.trim()) {
       return NextResponse.json(
         { success: false, error: 'First name is required.' },
@@ -254,6 +258,52 @@ export async function POST(request: Request) {
     if (!joiningDate) {
       return NextResponse.json(
         { success: false, error: 'Joining date is required.' },
+        { status: 400 }
+      )
+    }
+
+    const normalizedPfApplicable = pfApplicable === true
+    const normalizedPtApplicable = ptApplicable === true
+    const normalizedEsiApplicable = esiApplicable === true
+
+    const normalizedPtState =
+      typeof ptState === 'string'
+        ? ptState.trim()
+        : ''
+
+    const normalizedPtAmount =
+      ptDeduction !== undefined &&
+      ptDeduction !== null &&
+      ptDeduction !== ''
+        ? Number(ptDeduction)
+        : null
+
+    if (
+      normalizedPtApplicable &&
+      (
+        normalizedPtAmount === null ||
+        !Number.isFinite(normalizedPtAmount) ||
+        normalizedPtAmount < 0
+      )
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Professional Tax amount is required and must be a valid non-negative number when PT is applicable.',
+        },
+        { status: 400 }
+      )
+    }
+
+    if (
+      normalizedPtApplicable &&
+      !normalizedPtState
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'PT State is required when Professional Tax is applicable.',
+        },
         { status: 400 }
       )
     }
@@ -297,7 +347,7 @@ export async function POST(request: Request) {
 
     // ============================================================
     // STEP 2: Create or locate Supabase Auth User
-    // Idempotent — if auth user already exists, reconcile carefully.
+    // Idempotent â€” if auth user already exists, reconcile carefully.
     // ============================================================
     authUserId = ''
     isExistingAuthUser = false
@@ -334,7 +384,7 @@ export async function POST(request: Request) {
         authError.message.includes('already been registered') ||
         authError.message.includes('already exists')
       ) {
-        // Auth user exists — verify it's safe to link
+        // Auth user exists â€” verify it's safe to link
         const { data: existingUsers } = await supabase.auth.admin.listUsers()
         const existingUser = existingUsers?.users?.find(
           (u: any) => u.email?.toLowerCase() === cleanEmail
@@ -405,7 +455,7 @@ export async function POST(request: Request) {
 
     if (userUpsertError) {
       console.error('Error upserting user record:', userUpsertError.message)
-      // Non-fatal — continue with employee creation
+      // Non-fatal â€” continue with employee creation
     }
 
     // ============================================================
@@ -646,10 +696,6 @@ export async function POST(request: Request) {
     // ============================================================
     // STEP 9: Create statutory details record (Truthful Values)
     // ============================================================
-    const ptVal = ptDeduction !== undefined && ptDeduction !== null && ptDeduction !== ''
-      ? Number(ptDeduction)
-      : null
-
     const cleanPan = pan?.trim()?.toUpperCase() || null
     const maskedPan = cleanPan && cleanPan.length >= 10
       ? `${cleanPan.substring(0, 2)}••••••${cleanPan.substring(8)}`
@@ -657,16 +703,18 @@ export async function POST(request: Request) {
 
     const { error: statErr } = await supabase.from('employee_statutory_details').insert({
       employee_id: employeeTableId,
-      pf_applicable: true,
-      esi_applicable: false,
-      pt_applicable: ptVal !== null ? ptVal > 0 : true,
-      pt_state: 'Telangana',
+      pf_applicable: normalizedPfApplicable,
+      esi_applicable: normalizedEsiApplicable,
+      pt_applicable: normalizedPtApplicable,
+      pt_state: normalizedPtApplicable ? normalizedPtState : null,
+      pt_amount: normalizedPtApplicable ? normalizedPtAmount : null,
       pan_encrypted: cleanPan,
       pan_masked: maskedPan,
       tax_regime: 'new',
     })
+
     if (statErr) {
-      console.error('Warning: employee_statutory_details insert error:', statErr.message)
+      throw new Error(`Employee statutory details could not be saved: ${statErr.message}`)
     }
 
     // ============================================================
@@ -743,3 +791,4 @@ export async function POST(request: Request) {
     )
   }
 }
+

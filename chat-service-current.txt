@@ -1,0 +1,1023 @@
+﻿import { createAdminClient } from '@/lib/supabase/admin'
+import { searchCompanyDirectory } from '@/lib/services/employee-directory-service'
+
+export interface SafeDirectoryCard {
+  id: string
+  employeeCode: string
+  fullName: string
+  officialEmail: string
+  department: string
+  designation: string
+  avatarUrl?: string | null
+}
+
+export interface ChatParticipant {
+  userId: string
+  employeeId?: string
+  name: string
+  role?: string
+}
+
+export interface ChatMessage {
+  id: string
+  conversationId: string
+  senderUserId: string
+  senderEmployeeId?: string
+  senderName: string
+  content: string
+  attachments?: {
+    name: string
+    url: string
+    size?: number
+    type?: string
+  }[]
+  isAiMessage?: boolean
+  createdAt: string
+}
+
+export interface ChatConversation {
+  id: string
+  companyId: string
+  type: 'direct' | 'group' | 'channel'
+  title: string
+  departmentId?: string | null
+  participants: ChatParticipant[]
+  lastMessage?: {
+    content: string
+    senderName: string
+    createdAt: string
+  } | null
+  createdAt: string
+  updatedAt: string
+}
+
+/**
+ * Search active employees for Organization Messaging.
+ *
+ * SECURITY:
+ * Never exposes salary, CTC, bank, PAN, UAN,
+ * statutory, or personal-address information.
+ */
+export async function searchSafeDirectory(
+  companyId: string,
+  query: string,
+  options?: {
+    excludeEmployeeId?: string
+    currentEmployeeId?: string
+  }
+): Promise<SafeDirectoryCard[]> {
+  const list = await searchCompanyDirectory(
+    companyId,
+    {
+      query,
+      excludeEmployeeId:
+        options?.excludeEmployeeId,
+      currentEmployeeId:
+        options?.currentEmployeeId,
+      includeInactive: false,
+    }
+  )
+
+  return list.map((employee) => ({
+    id: employee.employeeId,
+    employeeCode: employee.employeeCode,
+    fullName: employee.fullName,
+    officialEmail: employee.officialEmail,
+    department: employee.department,
+    designation: employee.designation,
+    avatarUrl: employee.avatarUrl,
+  }))
+}
+
+/**
+ * Returns the active employee IDs for a company.
+ *
+ * Both ACTIVE and PROBATION employees are considered
+ * current workforce members.
+ *
+ * Deleted employees naturally disappear because their
+ * employees row no longer exists.
+ */
+async function getActiveEmployeeIds(
+  companyId: string
+): Promise<Set<string>> {
+  const supabase = createAdminClient()
+
+  if (!supabase) {
+    return new Set<string>()
+  }
+
+  const {
+    data,
+    error,
+  } = await supabase
+    .from('employees')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('is_active', true)
+    .in('employment_status', [
+      'active',
+      'probation',
+    ])
+
+  if (error) {
+    console.error(
+      '[ChatService] Unable to validate active employees:',
+      error.message
+    )
+
+    /*
+     * Fail closed.
+     *
+     * If employee validation fails, do not expose
+     * potentially stale direct/group conversations.
+     */
+    return new Set<string>()
+  }
+
+  return new Set(
+    (data || []).map(
+      (employee: any) => employee.id
+    )
+  )
+}
+
+/**
+ * Determine whether a non-channel conversation is still
+ * valid for the current active workforce.
+ *
+ * Admin/system participants may not have an employeeId.
+ * Those participants remain valid.
+ *
+ * Any participant that DOES have an employeeId must
+ * reference a currently active/probation employee.
+ */
+function conversationHasValidEmployees(
+  conversation: ChatConversation,
+  activeEmployeeIds: Set<string>
+): boolean {
+  if (conversation.type === 'channel') {
+    return true
+  }
+
+  const participants =
+    conversation.participants || []
+
+  if (participants.length === 0) {
+    return false
+  }
+
+  for (const participant of participants) {
+    if (
+      participant.employeeId &&
+      !activeEmployeeIds.has(
+        participant.employeeId
+      )
+    ) {
+      return false
+    }
+  }
+
+  return true
+}
+
+/**
+ * Fetch all conversations visible to the current user.
+ *
+ * Historical conversation JSON/messages are NOT deleted.
+ * Conversations involving deleted/deactivated employees
+ * are simply excluded from the active messaging UI.
+ */
+export async function getUserConversations(
+  companyId: string,
+  userId: string,
+  employeeId?: string
+): Promise<ChatConversation[]> {
+  const supabase = createAdminClient()
+
+  if (!supabase) {
+    return []
+  }
+
+  await ensureCompanyBroadcastChannel(
+    companyId
+  )
+
+  const [
+    conversationResult,
+    activeEmployeeIds,
+  ] = await Promise.all([
+    supabase
+      .from('company_settings')
+      .select(
+        'setting_key, setting_value'
+      )
+      .eq('company_id', companyId)
+      .eq(
+        'category',
+        'chat_conversation'
+      ),
+
+    getActiveEmployeeIds(companyId),
+  ])
+
+  const {
+    data,
+    error,
+  } = conversationResult
+
+  if (error || !data) {
+    if (error) {
+      console.error(
+        '[ChatService] Unable to load conversations:',
+        error.message
+      )
+    }
+
+    return []
+  }
+
+  const conversations: ChatConversation[] =
+    []
+
+  for (const row of data) {
+    try {
+      const conversation:
+        ChatConversation =
+        typeof row.setting_value ===
+        'string'
+          ? JSON.parse(
+              row.setting_value
+            )
+          : row.setting_value
+
+      if (
+        !conversation ||
+        !conversation.id
+      ) {
+        continue
+      }
+
+      // Company channels remain visible.
+      if (
+        conversation.type ===
+        'channel'
+      ) {
+        conversations.push(
+          conversation
+        )
+        continue
+      }
+
+      // First verify current user belongs
+      // to this conversation.
+      const isParticipant =
+        conversation.participants?.some(
+          participant =>
+            participant.userId ===
+              userId ||
+            Boolean(
+              employeeId &&
+                participant.employeeId ===
+                  employeeId
+            )
+        )
+
+      if (!isParticipant) {
+        continue
+      }
+
+      /*
+       * Do not expose an old direct/group
+       * conversation if one of its employee
+       * participants has since been deleted
+       * or deactivated.
+       */
+      if (
+        !conversationHasValidEmployees(
+          conversation,
+          activeEmployeeIds
+        )
+      ) {
+        continue
+      }
+
+      conversations.push(
+        conversation
+      )
+    } catch (error) {
+      console.error(
+        '[ChatService] Invalid conversation record:',
+        error
+      )
+    }
+  }
+
+  return conversations.sort(
+    (a, b) =>
+      new Date(
+        b.updatedAt
+      ).getTime() -
+      new Date(
+        a.updatedAt
+      ).getTime()
+  )
+}
+
+/**
+ * Create or retrieve an existing conversation.
+ */
+export async function createOrGetConversation(
+  companyId: string,
+  creator: {
+    userId: string
+    employeeId?: string
+    name: string
+  },
+  recipientEmployeeId: string,
+  options?: {
+    type?:
+      | 'direct'
+      | 'group'
+      | 'channel'
+    title?: string
+  }
+): Promise<ChatConversation> {
+  const supabase = createAdminClient()
+
+  if (!supabase) {
+    throw new Error(
+      'Database unavailable'
+    )
+  }
+
+  const type =
+    options?.type || 'direct'
+
+  /*
+   * Direct recipients MUST be current
+   * active/probation employees.
+   */
+  const {
+    data: recipientEmp,
+    error: recipientError,
+  } = await supabase
+    .from('employees')
+    .select(`
+      id,
+      employee_code,
+      full_name,
+      user_id,
+      is_active,
+      employment_status
+    `)
+    .eq('company_id', companyId)
+    .eq('id', recipientEmployeeId)
+    .eq('is_active', true)
+    .in('employment_status', [
+      'active',
+      'probation',
+    ])
+    .maybeSingle()
+
+  if (recipientError) {
+    throw new Error(
+      `Unable to validate recipient: ${recipientError.message}`
+    )
+  }
+
+  if (
+    !recipientEmp &&
+    type === 'direct'
+  ) {
+    throw new Error(
+      'Recipient employee is not available for messaging.'
+    )
+  }
+
+  const recipientParticipant:
+    ChatParticipant = {
+    userId:
+      recipientEmp?.user_id ||
+      recipientEmployeeId,
+
+    employeeId:
+      recipientEmp?.id ||
+      recipientEmployeeId,
+
+    name:
+      recipientEmp?.full_name ||
+      'Colleague',
+  }
+
+  const creatorParticipant:
+    ChatParticipant = {
+    userId: creator.userId,
+    employeeId:
+      creator.employeeId,
+    name: creator.name,
+  }
+
+  // ---------------------------------------------------------
+  // EXISTING DIRECT CONVERSATION
+  // ---------------------------------------------------------
+
+  if (
+    type === 'direct' &&
+    recipientEmp
+  ) {
+    const existingList =
+      await getUserConversations(
+        companyId,
+        creator.userId,
+        creator.employeeId
+      )
+
+    const existing =
+      existingList.find(
+        conversation =>
+          conversation.type ===
+            'direct' &&
+          conversation.participants.some(
+            participant =>
+              participant.employeeId ===
+                recipientEmp.id ||
+              participant.userId ===
+                recipientEmp.user_id
+          ) &&
+          conversation.participants.some(
+            participant =>
+              participant.employeeId ===
+                creator.employeeId ||
+              participant.userId ===
+                creator.userId
+          )
+      )
+
+    if (existing) {
+      return existing
+    }
+  }
+
+  // ---------------------------------------------------------
+  // CREATE CONVERSATION
+  // ---------------------------------------------------------
+
+  const conversationId =
+    `conv_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 8)}`
+
+  const now =
+    new Date().toISOString()
+
+  const title =
+    options?.title ||
+    (
+      type === 'direct'
+        ? recipientParticipant.name
+        : 'Group Chat'
+    )
+
+  const newConversation:
+    ChatConversation = {
+    id: conversationId,
+    companyId,
+    type,
+    title,
+    participants: [
+      creatorParticipant,
+      recipientParticipant,
+    ],
+    lastMessage: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  const {
+    error: insertError,
+  } = await supabase
+    .from('company_settings')
+    .insert({
+      company_id: companyId,
+      category:
+        'chat_conversation',
+      setting_key:
+        `chat_conv_${conversationId}`,
+      setting_value:
+        newConversation,
+    })
+
+  if (insertError) {
+    throw new Error(
+      `Unable to create conversation: ${insertError.message}`
+    )
+  }
+
+  return newConversation
+}
+
+/**
+ * Ensure default company-wide announcement
+ * channel exists.
+ */
+async function ensureCompanyBroadcastChannel(
+  companyId: string
+): Promise<void> {
+  const supabase = createAdminClient()
+
+  if (!supabase) {
+    return
+  }
+
+  const defaultKey =
+    'chat_conv_company_announcements'
+
+  const {
+    data,
+    error,
+  } = await supabase
+    .from('company_settings')
+    .select('setting_key')
+    .eq('company_id', companyId)
+    .eq('setting_key', defaultKey)
+    .maybeSingle()
+
+  if (error) {
+    console.error(
+      '[ChatService] Unable to check announcement channel:',
+      error.message
+    )
+    return
+  }
+
+  if (data) {
+    return
+  }
+
+  const now =
+    new Date().toISOString()
+
+  const broadcastConversation:
+    ChatConversation = {
+    id: 'company_announcements',
+    companyId,
+    type: 'channel',
+    title: 'Company Announcements',
+    participants: [],
+    lastMessage: {
+      content:
+        'Welcome to Haryak Technologies internal organization chat.',
+      senderName:
+        'Haryak HR Team',
+      createdAt: now,
+    },
+    createdAt: now,
+    updatedAt: now,
+  }
+
+  const {
+    error: conversationError,
+  } = await supabase
+    .from('company_settings')
+    .insert({
+      company_id: companyId,
+      category:
+        'chat_conversation',
+      setting_key: defaultKey,
+      setting_value:
+        broadcastConversation,
+    })
+
+  if (conversationError) {
+    console.error(
+      '[ChatService] Unable to create announcement channel:',
+      conversationError.message
+    )
+    return
+  }
+
+  const welcomeMessage:
+    ChatMessage = {
+    id:
+      `msg_welcome_${Date.now()}`,
+
+    conversationId:
+      'company_announcements',
+
+    senderUserId:
+      'system',
+
+    senderName:
+      'Haryak HR Team',
+
+    content:
+      'Welcome to Haryak Technologies internal organization chat. Stay connected with your team and colleagues across departments.',
+
+    createdAt:
+      now,
+  }
+
+  const {
+    error: messageError,
+  } = await supabase
+    .from('company_settings')
+    .insert({
+      company_id: companyId,
+      category: 'chat_message',
+      setting_key:
+        `chat_msg_${welcomeMessage.id}`,
+      setting_value:
+        welcomeMessage,
+    })
+
+  if (messageError) {
+    console.error(
+      '[ChatService] Unable to create welcome message:',
+      messageError.message
+    )
+  }
+}
+
+/**
+ * Get messages for a conversation.
+ */
+export async function getConversationMessages(
+  companyId: string,
+  conversationId: string,
+  userId: string,
+  employeeId?: string
+): Promise<ChatMessage[]> {
+  const supabase = createAdminClient()
+
+  if (!supabase) {
+    return []
+  }
+
+  const {
+    data: conversationRow,
+    error: conversationError,
+  } = await supabase
+    .from('company_settings')
+    .select('setting_value')
+    .eq('company_id', companyId)
+    .eq(
+      'setting_key',
+      `chat_conv_${conversationId}`
+    )
+    .maybeSingle()
+
+  if (
+    conversationError ||
+    !conversationRow
+  ) {
+    throw new Error(
+      'Conversation not found'
+    )
+  }
+
+  const conversation:
+    ChatConversation =
+    typeof conversationRow.setting_value ===
+    'string'
+      ? JSON.parse(
+          conversationRow.setting_value
+        )
+      : conversationRow.setting_value
+
+  if (
+    conversation.type !== 'channel'
+  ) {
+    const isParticipant =
+      conversation.participants?.some(
+        participant =>
+          participant.userId ===
+            userId ||
+          Boolean(
+            employeeId &&
+              participant.employeeId ===
+                employeeId
+          )
+      )
+
+    if (!isParticipant) {
+      const error: any =
+        new Error(
+          'Forbidden: You are not a participant in this conversation.'
+        )
+
+      error.status = 403
+      throw error
+    }
+
+    const activeEmployeeIds =
+      await getActiveEmployeeIds(
+        companyId
+      )
+
+    if (
+      !conversationHasValidEmployees(
+        conversation,
+        activeEmployeeIds
+      )
+    ) {
+      const error: any =
+        new Error(
+          'This conversation is no longer active because one or more employee participants are no longer part of the active workforce.'
+        )
+
+      error.status = 410
+      throw error
+    }
+  }
+
+  const {
+    data: messageRows,
+    error: messageError,
+  } = await supabase
+    .from('company_settings')
+    .select('setting_value')
+    .eq('company_id', companyId)
+    .eq(
+      'category',
+      'chat_message'
+    )
+
+  if (
+    messageError ||
+    !messageRows
+  ) {
+    return []
+  }
+
+  const messages:
+    ChatMessage[] = []
+
+  for (const row of messageRows) {
+    try {
+      const message:
+        ChatMessage =
+        typeof row.setting_value ===
+        'string'
+          ? JSON.parse(
+              row.setting_value
+            )
+          : row.setting_value
+
+      if (
+        message &&
+        message.conversationId ===
+          conversationId
+      ) {
+        messages.push(message)
+      }
+    } catch (error) {
+      console.error(
+        '[ChatService] Invalid chat message:',
+        error
+      )
+    }
+  }
+
+  return messages.sort(
+    (a, b) =>
+      new Date(
+        a.createdAt
+      ).getTime() -
+      new Date(
+        b.createdAt
+      ).getTime()
+  )
+}
+
+/**
+ * Send a message.
+ */
+export async function sendChatMessage(
+  companyId: string,
+  conversationId: string,
+  sender: {
+    userId: string
+    employeeId?: string
+    name: string
+  },
+  content: string,
+  attachments?: {
+    name: string
+    url: string
+    size?: number
+    type?: string
+  }[]
+): Promise<ChatMessage> {
+  const supabase = createAdminClient()
+
+  if (!supabase) {
+    throw new Error(
+      'Database unavailable'
+    )
+  }
+
+  if (
+    !content.trim() &&
+    (
+      !attachments ||
+      attachments.length === 0
+    )
+  ) {
+    throw new Error(
+      'Message content or attachment is required'
+    )
+  }
+
+  // ---------------------------------------------------------
+  // VERIFY CONVERSATION
+  // ---------------------------------------------------------
+
+  const {
+    data: conversationRow,
+    error: conversationError,
+  } = await supabase
+    .from('company_settings')
+    .select('setting_value')
+    .eq('company_id', companyId)
+    .eq(
+      'setting_key',
+      `chat_conv_${conversationId}`
+    )
+    .maybeSingle()
+
+  if (
+    conversationError ||
+    !conversationRow
+  ) {
+    throw new Error(
+      'Conversation not found'
+    )
+  }
+
+  const conversation:
+    ChatConversation =
+    typeof conversationRow.setting_value ===
+    'string'
+      ? JSON.parse(
+          conversationRow.setting_value
+        )
+      : conversationRow.setting_value
+
+  if (
+    conversation.type !== 'channel'
+  ) {
+    const isParticipant =
+      conversation.participants?.some(
+        participant =>
+          participant.userId ===
+            sender.userId ||
+          Boolean(
+            sender.employeeId &&
+              participant.employeeId ===
+                sender.employeeId
+          )
+      )
+
+    if (!isParticipant) {
+      const error: any =
+        new Error(
+          'Forbidden: You are not a participant in this conversation.'
+        )
+
+      error.status = 403
+      throw error
+    }
+
+    /*
+     * Prevent messaging an employee who was
+     * deleted/deactivated after the conversation
+     * was originally created.
+     */
+    const activeEmployeeIds =
+      await getActiveEmployeeIds(
+        companyId
+      )
+
+    if (
+      !conversationHasValidEmployees(
+        conversation,
+        activeEmployeeIds
+      )
+    ) {
+      const error: any =
+        new Error(
+          'This conversation is no longer active because one or more employee participants are no longer part of the active workforce.'
+        )
+
+      error.status = 410
+      throw error
+    }
+  }
+
+  // ---------------------------------------------------------
+  // CREATE MESSAGE
+  // ---------------------------------------------------------
+
+  const messageId =
+    `msg_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 8)}`
+
+  const now =
+    new Date().toISOString()
+
+  const message:
+    ChatMessage = {
+    id: messageId,
+    conversationId,
+    senderUserId:
+      sender.userId,
+    senderEmployeeId:
+      sender.employeeId,
+    senderName:
+      sender.name,
+    content:
+      content.trim(),
+    attachments:
+      attachments || [],
+    createdAt:
+      now,
+  }
+
+  const {
+    error: messageInsertError,
+  } = await supabase
+    .from('company_settings')
+    .insert({
+      company_id:
+        companyId,
+
+      category:
+        'chat_message',
+
+      setting_key:
+        `chat_msg_${messageId}`,
+
+      setting_value:
+        message,
+    })
+
+  if (messageInsertError) {
+    throw new Error(
+      `Unable to send message: ${messageInsertError.message}`
+    )
+  }
+
+  // ---------------------------------------------------------
+  // UPDATE CONVERSATION PREVIEW
+  // ---------------------------------------------------------
+
+  conversation.lastMessage = {
+    content:
+      message.content ||
+      (
+        message.attachments?.length
+          ? 'Attachment'
+          : ''
+      ),
+
+    senderName:
+      message.senderName,
+
+    createdAt:
+      now,
+  }
+
+  conversation.updatedAt =
+    now
+
+  const {
+    error: conversationUpdateError,
+  } = await supabase
+    .from('company_settings')
+    .update({
+      setting_value:
+        conversation,
+
+      updated_at:
+        now,
+    })
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'setting_key',
+      `chat_conv_${conversationId}`
+    )
+
+  if (conversationUpdateError) {
+    console.error(
+      '[ChatService] Message sent but conversation preview update failed:',
+      conversationUpdateError.message
+    )
+  }
+
+  return message
+}

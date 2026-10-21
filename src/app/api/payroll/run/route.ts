@@ -2646,6 +2646,320 @@ export async function POST(
     }
 
     // ========================================================
+    // APPROVED HISTORICAL PAYROLL / YTD
+    // ========================================================
+
+    /**
+     * YTD is calculated from finalized historical payroll only.
+     *
+     * For this India payroll implementation the payroll year is the
+     * financial year (1 April through 31 March). The current payroll
+     * period is NOT included here; calculatePayroll() receives only
+     * historical totals and adds the current period deterministically.
+     *
+     * Draft, calculating, review, error, rejected, or otherwise
+     * non-final payroll runs are deliberately excluded.
+     */
+    const periodEndParts =
+      parseDateOnly(
+        periodEnd
+      )
+
+    const financialYearStart =
+      periodEndParts.month >= 4
+        ? `${periodEndParts.year}-04-01`
+        : `${periodEndParts.year - 1}-04-01`
+
+    const historicalYtdByEmployee =
+      new Map<
+        string,
+        {
+          gross: number
+          pf: number
+          professionalTax: number
+          incomeTax: number
+          net: number
+        }
+      >()
+
+    const {
+      data: priorPeriods,
+      error: priorPeriodError,
+    } = await admin
+      .from(
+        'payroll_periods'
+      )
+      .select(
+        'id, start_date, end_date'
+      )
+      .eq(
+        'company_id',
+        companyId
+      )
+      .gte(
+        'end_date',
+        financialYearStart
+      )
+      .lt(
+        'end_date',
+        periodStart
+      )
+
+    if (priorPeriodError) {
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status: 'error',
+        })
+        .eq(
+          'id',
+          run.id
+        )
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Historical payroll periods could not be loaded for YTD calculation: ${priorPeriodError.message}`,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+
+    const priorPeriodIds =
+      (priorPeriods || [])
+        .map(
+          (item: any) =>
+            item.id
+        )
+        .filter(Boolean)
+
+    if (
+      priorPeriodIds.length > 0 &&
+      processingEmployeeIds.length > 0
+    ) {
+      const {
+        data: finalizedRuns,
+        error: finalizedRunError,
+      } = await admin
+        .from(
+          'payroll_runs'
+        )
+        .select(
+          'id, payroll_period_id, status'
+        )
+        .eq(
+          'company_id',
+          companyId
+        )
+        .in(
+          'payroll_period_id',
+          priorPeriodIds
+        )
+        .in(
+          'status',
+          [
+            'approved',
+            'locked',
+          ]
+        )
+
+      if (finalizedRunError) {
+        await admin
+          .from(
+            'payroll_runs'
+          )
+          .update({
+            status: 'error',
+          })
+          .eq(
+            'id',
+            run.id
+          )
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Finalized historical payroll runs could not be loaded for YTD calculation: ${finalizedRunError.message}`,
+          },
+          {
+            status: 500,
+          }
+        )
+      }
+
+      const finalizedRunIds =
+        (finalizedRuns || [])
+          .map(
+            (item: any) =>
+              item.id
+          )
+          .filter(Boolean)
+
+      if (finalizedRunIds.length > 0) {
+        const {
+          data: historicalRecords,
+          error: historicalRecordError,
+        } = await admin
+          .from(
+            'payroll_employee_records'
+          )
+          .select(`
+            id,
+            employee_id,
+            gross_earnings,
+            net_salary,
+            payroll_deductions(
+              component_name,
+              component_code,
+              amount
+            )
+          `)
+          .in(
+            'payroll_run_id',
+            finalizedRunIds
+          )
+          .in(
+            'employee_id',
+            processingEmployeeIds
+          )
+
+        if (historicalRecordError) {
+          await admin
+            .from(
+              'payroll_runs'
+            )
+            .update({
+              status: 'error',
+            })
+            .eq(
+              'id',
+              run.id
+            )
+
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                `Historical payroll records could not be loaded for YTD calculation: ${historicalRecordError.message}`,
+            },
+            {
+              status: 500,
+            }
+          )
+        }
+
+        for (
+          const historicalRecord of
+            historicalRecords || []
+        ) {
+          const employeeId =
+            historicalRecord.employee_id
+
+          if (!employeeId) {
+            continue
+          }
+
+          const totals =
+            historicalYtdByEmployee.get(
+              employeeId
+            ) || {
+              gross: 0,
+              pf: 0,
+              professionalTax: 0,
+              incomeTax: 0,
+              net: 0,
+            }
+
+          totals.gross +=
+            Number(
+              historicalRecord.gross_earnings ||
+                0
+            )
+
+          totals.net +=
+            Number(
+              historicalRecord.net_salary ||
+                0
+            )
+
+          for (
+            const deduction of
+              historicalRecord.payroll_deductions || []
+          ) {
+            const code =
+              String(
+                deduction.component_code ||
+                  ''
+              )
+                .trim()
+                .toUpperCase()
+
+            const name =
+              String(
+                deduction.component_name ||
+                  ''
+              )
+                .trim()
+                .toLowerCase()
+
+            const amount =
+              Number(
+                deduction.amount ||
+                  0
+              )
+
+            if (
+              code === 'PF' ||
+              code === 'EPF' ||
+              name.includes(
+                'provident'
+              ) ||
+              name === 'pf'
+            ) {
+              totals.pf += amount
+              continue
+            }
+
+            if (
+              code === 'PT' ||
+              code === 'PROFESSIONAL_TAX' ||
+              name.includes(
+                'professional tax'
+              )
+            ) {
+              totals.professionalTax +=
+                amount
+              continue
+            }
+
+            if (
+              code === 'TDS' ||
+              code === 'INCOME_TAX' ||
+              name.includes(
+                'income tax'
+              ) ||
+              name === 'tds'
+            ) {
+              totals.incomeTax +=
+                amount
+            }
+          }
+
+          historicalYtdByEmployee.set(
+            employeeId,
+            totals
+          )
+        }
+      }
+    }
+
+    // ========================================================
     // AGGREGATION
     // ========================================================
 
@@ -3135,23 +3449,34 @@ export async function POST(
           finalLopDays,
 
         /**
-         * TODO:
-         * Replace with approved historical payroll aggregation.
+         * Historical finalized payroll totals for the current
+         * financial year. calculatePayroll() adds the current
+         * period to these values where YTD outputs are produced.
          */
         ytdGrossEarnings:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.gross || 0,
 
         ytdPfContribution:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.pf || 0,
 
         ytdProfessionalTax:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.professionalTax || 0,
 
         ytdIncomeTax:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.incomeTax || 0,
 
         ytdNetPay:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.net || 0,
 
         pfApplicable:
           statutory

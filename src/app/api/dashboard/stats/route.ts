@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server'
+
 import {
   createAdminClient,
   isSupabaseConfigured,
 } from '@/lib/supabase/admin'
+
 import { resolveRequestContext } from '@/lib/services/company-resolver'
 
 export async function GET() {
   try {
-    // Resolve authenticated user's company
+    // ============================================================
+    // 1. AUTHENTICATED COMPANY CONTEXT
+    // ============================================================
+
     const resolution = await resolveRequestContext()
 
     if (!resolution.ok) {
@@ -23,6 +28,10 @@ export async function GET() {
     }
 
     const { companyId } = resolution.context
+
+    // ============================================================
+    // 2. SUPABASE AVAILABILITY
+    // ============================================================
 
     if (!isSupabaseConfigured()) {
       return NextResponse.json({
@@ -40,20 +49,22 @@ export async function GET() {
       })
     }
 
-    // ---------------------------------------------------------
-    // 1. ACTIVE EMPLOYEES
-    // ---------------------------------------------------------
-    const { data: emps, error: employeeError } = await supabase
+    // ============================================================
+    // 3. ACTIVE / PAYROLL-ELIGIBLE EMPLOYEES
+    // ============================================================
+
+    const {
+      data: employeeData,
+      error: employeeError,
+    } = await supabase
       .from('employees')
-      .select(
-        `
+      .select(`
         id,
         department_id,
         employment_status,
         is_active,
         departments:department_id(name)
-      `,
-      )
+      `)
       .eq('company_id', companyId)
       .eq('is_active', true)
 
@@ -63,7 +74,7 @@ export async function GET() {
       )
     }
 
-    const employees = emps || []
+    const employees = employeeData || []
 
     const eligibleEmployees = employees.filter(
       (employee: any) =>
@@ -72,20 +83,25 @@ export async function GET() {
     )
 
     const totalEmployees = eligibleEmployees.length
+
     const activeEmployees = totalEmployees
 
     const activeEmployeeIds = new Set(
-      eligibleEmployees.map((employee: any) => employee.id),
+      eligibleEmployees.map(
+        (employee: any) => employee.id,
+      ),
     )
 
-    // ---------------------------------------------------------
-    // 2. DEPARTMENT DISTRIBUTION
-    // ---------------------------------------------------------
+    // ============================================================
+    // 4. DEPARTMENT DISTRIBUTION
+    // ============================================================
+
     const departmentsMap: Record<string, number> = {}
 
     eligibleEmployees.forEach((employee: any) => {
       const departmentName =
-        employee.departments?.name || 'Unassigned'
+        employee.departments?.name ||
+        'Unassigned'
 
       departmentsMap[departmentName] =
         (departmentsMap[departmentName] || 0) + 1
@@ -96,31 +112,53 @@ export async function GET() {
     ).map(([name, count]) => ({
       name,
       count,
+
       percentage:
         totalEmployees > 0
-          ? Math.round((count / totalEmployees) * 100)
+          ? Math.round(
+              (count / totalEmployees) * 100,
+            )
           : 0,
+
       color: 'bg-[#1e2a78]',
     }))
 
-    // ---------------------------------------------------------
-    // 3. LEAVE TODAY
-    // ---------------------------------------------------------
-    const today = new Date()
-      .toISOString()
-      .split('T')[0]
+    // ============================================================
+    // 5. APPROVED LEAVE TODAY
+    // ============================================================
+
+    const today =
+      new Date()
+        .toISOString()
+        .split('T')[0]
 
     let onLeaveToday = 0
 
     if (totalEmployees > 0) {
-      const { data: leaveData, error: leaveError } =
-        await supabase
-          .from('leave_requests')
-          .select('id, employee_id')
-          .eq('company_id', companyId)
-          .eq('status', 'approved')
-          .lte('start_date', today)
-          .gte('end_date', today)
+      const {
+        data: leaveData,
+        error: leaveError,
+      } = await supabase
+        .from('leave_requests')
+        .select(
+          'id, employee_id',
+        )
+        .eq(
+          'company_id',
+          companyId,
+        )
+        .eq(
+          'status',
+          'approved',
+        )
+        .lte(
+          'start_date',
+          today,
+        )
+        .gte(
+          'end_date',
+          today,
+        )
 
       if (leaveError) {
         throw new Error(
@@ -128,202 +166,113 @@ export async function GET() {
         )
       }
 
-      onLeaveToday = (leaveData || []).filter(
-        (leave: any) =>
-          activeEmployeeIds.has(leave.employee_id),
-      ).length
+      onLeaveToday =
+        (leaveData || []).filter(
+          (leave: any) =>
+            activeEmployeeIds.has(
+              leave.employee_id,
+            ),
+        ).length
     }
 
-    // ---------------------------------------------------------
-    // 4. PENDING APPROVALS
-    // ---------------------------------------------------------
-    const {
-      data: approvalData,
-      error: approvalError,
-    } = await supabase
-      .from('approval_requests')
-      .select('id')
-      .eq('company_id', companyId)
-      .eq('status', 'pending')
+    // ============================================================
+    // 6. LIVE PENDING APPROVALS
+    // ============================================================
+    //
+    // IMPORTANT:
+    //
+    // Dashboard approvals must represent the SAME live workflows
+    // that the Authorization & Approvals Queue displays.
+    //
+    // Current approval sources:
+    //
+    // 1. Pending leave requests
+    //
+    // 2. Timesheets with:
+    //      SUBMITTED
+    //      UNDER_REVIEW
+    //
+    // We DO NOT use the old approval_requests table as the
+    // dashboard authority because that caused the Dashboard
+    // to show 0 while the Approvals Queue showed pending items.
+    // ============================================================
 
-    if (approvalError) {
+    const [
+      pendingLeaveResult,
+      pendingTimesheetResult,
+    ] = await Promise.all([
+      supabase
+        .from('leave_requests')
+        .select(
+          'id',
+          {
+            count: 'exact',
+            head: true,
+          },
+        )
+        .eq(
+          'company_id',
+          companyId,
+        )
+        .eq(
+          'status',
+          'pending',
+        ),
+
+      supabase
+        .from('timesheets')
+        .select(
+          'id',
+          {
+            count: 'exact',
+            head: true,
+          },
+        )
+        .eq(
+          'company_id',
+          companyId,
+        )
+        .in(
+          'status',
+          [
+            'SUBMITTED',
+            'UNDER_REVIEW',
+          ],
+        ),
+    ])
+
+    if (pendingLeaveResult.error) {
       throw new Error(
-        `Unable to load approval requests: ${approvalError.message}`,
+        `Unable to load pending leave approvals: ${pendingLeaveResult.error.message}`,
       )
     }
+
+    if (pendingTimesheetResult.error) {
+      throw new Error(
+        `Unable to load pending timesheet approvals: ${pendingTimesheetResult.error.message}`,
+      )
+    }
+
+    const pendingLeaveApprovals =
+      pendingLeaveResult.count || 0
+
+    const pendingTimesheetApprovals =
+      pendingTimesheetResult.count || 0
 
     const pendingApprovals =
-      approvalData?.length || 0
+      pendingLeaveApprovals +
+      pendingTimesheetApprovals
 
-    // ---------------------------------------------------------
-    // 5. CURRENT ACTIVE SALARY TOTAL
-    // ---------------------------------------------------------
-    let estimatedGross = 0
+    // ============================================================
+    // 7. CURRENT PAYROLL PERIOD
+    // ============================================================
 
-    if (totalEmployees > 0) {
-      const {
-        data: salaries,
-        error: salaryError,
-      } = await supabase
-        .from('salary_structures')
-        .select('monthly_gross, employee_id')
-        .eq('company_id', companyId)
-        .eq('status', 'active')
+    const currentDate =
+      new Date()
 
-      if (salaryError) {
-        throw new Error(
-          `Unable to load salary structures: ${salaryError.message}`,
-        )
-      }
-
-      estimatedGross = (salaries || [])
-        .filter((salary: any) =>
-          activeEmployeeIds.has(salary.employee_id),
-        )
-        .reduce(
-          (sum: number, salary: any) =>
-            sum +
-            (Number(salary.monthly_gross) || 0),
-          0,
-        )
-    }
-
-    // ---------------------------------------------------------
-    // 6. PAYROLL ESTIMATES
-    //
-    // Historical payroll runs must NOT make the dashboard show
-    // payroll values when there are no currently eligible
-    // employees.
-    // ---------------------------------------------------------
-    let estimatedDeductions = 0
-    let estimatedNet = 0
-
-    if (totalEmployees > 0) {
-      const {
-        data: latestRun,
-        error: payrollRunError,
-      } = await supabase
-        .from('payroll_runs')
-        .select(
-          'id, total_deductions, total_net, total_gross',
-        )
-        .eq('company_id', companyId)
-        .order('created_at', {
-          ascending: false,
-        })
-        .limit(1)
-        .maybeSingle()
-
-      if (payrollRunError) {
-        throw new Error(
-          `Unable to load latest payroll run: ${payrollRunError.message}`,
-        )
-      }
-
-      if (latestRun) {
-        estimatedDeductions =
-          Number(latestRun.total_deductions) || 0
-
-        estimatedNet =
-          Number(latestRun.total_net) || 0
-
-        /*
-         * IMPORTANT:
-         * Do not blindly use an old payroll gross if it belongs
-         * to employees who are no longer part of the active
-         * workforce.
-         *
-         * The salary-structure total above is the safest live
-         * representation of the current eligible workforce.
-         *
-         * Historical payroll runs remain available elsewhere
-         * for audit/history purposes.
-         */
-        if (estimatedGross === 0) {
-          estimatedDeductions = 0
-          estimatedNet = 0
-        }
-      } else {
-        estimatedDeductions = 0
-        estimatedNet = estimatedGross
-      }
-    }
-
-    // Absolute safety rule:
-    // zero eligible workforce = zero current payroll values.
-    if (totalEmployees === 0) {
-      estimatedGross = 0
-      estimatedDeductions = 0
-      estimatedNet = 0
-    }
-
-    // If active employees exist but no usable payroll net is
-    // available yet, show current gross as the preliminary net
-    // instead of stale historical data.
-    if (
-      totalEmployees > 0 &&
-      estimatedGross > 0 &&
-      estimatedNet === 0 &&
-      estimatedDeductions === 0
-    ) {
-      estimatedNet = estimatedGross
-    }
-
-    // ---------------------------------------------------------
-    // 7. RECENT AUDIT ACTIVITY
-    // ---------------------------------------------------------
-    const {
-      data: logs,
-      error: auditError,
-    } = await supabase
-      .from('audit_logs')
-      .select(
-        `
-        id,
-        user_name,
-        description,
-        action,
-        entity_type,
-        created_at
-      `,
-      )
-      .eq('company_id', companyId)
-      .order('created_at', {
-        ascending: false,
-      })
-      .limit(5)
-
-    if (auditError) {
-      throw new Error(
-        `Unable to load audit logs: ${auditError.message}`,
-      )
-    }
-
-    const recentAuditLogs = (logs || []).map(
-      (log: any) => ({
-        id: log.id,
-        actor: log.user_name || 'System',
-        action:
-          log.description ||
-          log.action ||
-          'Activity',
-        target:
-          log.entity_type || 'System',
-        time: new Date(
-          log.created_at,
-        ).toLocaleTimeString('en-IN', {
-          hour: '2-digit',
-          minute: '2-digit',
-        }),
-      }),
-    )
-
-    // ---------------------------------------------------------
-    // 8. CURRENT PAYROLL PERIOD STATUS
-    // ---------------------------------------------------------
-    const currentDate = new Date()
     const currentMonth =
       currentDate.getMonth() + 1
+
     const currentYear =
       currentDate.getFullYear()
 
@@ -332,10 +281,21 @@ export async function GET() {
       error: periodError,
     } = await supabase
       .from('payroll_periods')
-      .select('id, status')
-      .eq('company_id', companyId)
-      .eq('period_month', currentMonth)
-      .eq('period_year', currentYear)
+      .select(
+        'id, status',
+      )
+      .eq(
+        'company_id',
+        companyId,
+      )
+      .eq(
+        'period_month',
+        currentMonth,
+      )
+      .eq(
+        'period_year',
+        currentYear,
+      )
       .maybeSingle()
 
     if (periodError) {
@@ -346,29 +306,308 @@ export async function GET() {
 
     const payrollStatus =
       totalEmployees > 0
-        ? currentPeriod?.status || 'NOT_STARTED'
+        ? currentPeriod?.status ||
+          'NOT_STARTED'
         : 'NOT_STARTED'
 
-    // ---------------------------------------------------------
-    // RESPONSE
-    // ---------------------------------------------------------
+    // ============================================================
+    // 8. CURRENT ACTIVE SALARY STRUCTURE TOTAL
+    // ============================================================
+    //
+    // This is used as the preliminary payroll estimate only when
+    // the current payroll period has NOT yet produced a payroll run.
+    // ============================================================
+
+    let salaryStructureGross = 0
+
+    if (totalEmployees > 0) {
+      const {
+        data: salaryData,
+        error: salaryError,
+      } = await supabase
+        .from('salary_structures')
+        .select(
+          'monthly_gross, employee_id',
+        )
+        .eq(
+          'company_id',
+          companyId,
+        )
+        .eq(
+          'status',
+          'active',
+        )
+
+      if (salaryError) {
+        throw new Error(
+          `Unable to load salary structures: ${salaryError.message}`,
+        )
+      }
+
+      salaryStructureGross =
+        (salaryData || [])
+          .filter(
+            (salary: any) =>
+              activeEmployeeIds.has(
+                salary.employee_id,
+              ),
+          )
+          .reduce(
+            (
+              sum: number,
+              salary: any,
+            ) =>
+              sum +
+              (
+                Number(
+                  salary.monthly_gross,
+                ) || 0
+              ),
+            0,
+          )
+    }
+
+    // ============================================================
+    // 9. CURRENT PAYROLL TOTALS
+    // ============================================================
+    //
+    // CRITICAL DATA CONSISTENCY RULE
+    //
+    // Gross
+    // Deductions
+    // Net
+    //
+    // MUST come from the same payroll source.
+    //
+    // OLD BEHAVIOUR:
+    //
+    // Current salary structure gross
+    // +
+    // latest historical payroll deductions/net
+    //
+    // This could produce:
+    //
+    // Gross       ₹57,600
+    // Deductions  ₹0
+    // Net         ₹62,833
+    //
+    // which is internally inconsistent.
+    //
+    // NEW BEHAVIOUR:
+    //
+    // If a payroll run exists for the CURRENT payroll period,
+    // use all three values from that same run.
+    //
+    // Otherwise:
+    //
+    // Gross       = active salary structures
+    // Deductions  = 0
+    // Net         = Gross
+    //
+    // until payroll is actually calculated.
+    // ============================================================
+
+    let estimatedGross =
+      salaryStructureGross
+
+    let estimatedDeductions = 0
+
+    let estimatedNet =
+      salaryStructureGross
+
+    if (
+      totalEmployees > 0 &&
+      currentPeriod?.id
+    ) {
+      const {
+        data: latestCurrentRun,
+        error: payrollRunError,
+      } = await supabase
+        .from('payroll_runs')
+        .select(`
+          id,
+          total_gross,
+          total_deductions,
+          total_net,
+          created_at
+        `)
+        .eq(
+          'company_id',
+          companyId,
+        )
+        .eq(
+          'payroll_period_id',
+          currentPeriod.id,
+        )
+        .order(
+          'created_at',
+          {
+            ascending: false,
+          },
+        )
+        .limit(1)
+        .maybeSingle()
+
+      if (payrollRunError) {
+        throw new Error(
+          `Unable to load current payroll run: ${payrollRunError.message}`,
+        )
+      }
+
+      if (latestCurrentRun) {
+        estimatedGross =
+          Number(
+            latestCurrentRun.total_gross,
+          ) || 0
+
+        estimatedDeductions =
+          Number(
+            latestCurrentRun.total_deductions,
+          ) || 0
+
+        estimatedNet =
+          Number(
+            latestCurrentRun.total_net,
+          ) || 0
+      }
+    }
+
+    // ============================================================
+    // 10. ZERO-WORKFORCE SAFETY
+    // ============================================================
+
+    if (totalEmployees === 0) {
+      estimatedGross = 0
+      estimatedDeductions = 0
+      estimatedNet = 0
+    }
+
+    // ============================================================
+    // 11. RECENT SYSTEM / AUDIT ACTIVITY
+    // ============================================================
+
+    const {
+      data: auditData,
+      error: auditError,
+    } = await supabase
+      .from('audit_logs')
+      .select(`
+        id,
+        user_name,
+        description,
+        action,
+        entity_type,
+        created_at
+      `)
+      .eq(
+        'company_id',
+        companyId,
+      )
+      .order(
+        'created_at',
+        {
+          ascending: false,
+        },
+      )
+      .limit(5)
+
+    if (auditError) {
+      throw new Error(
+        `Unable to load audit logs: ${auditError.message}`,
+      )
+    }
+
+    const recentAuditLogs =
+      (auditData || []).map(
+        (log: any) => ({
+          id:
+            log.id,
+
+          actor:
+            log.user_name ||
+            'System',
+
+          action:
+            log.description ||
+            log.action ||
+            'Activity',
+
+          target:
+            log.entity_type ||
+            'System',
+
+          time:
+            new Date(
+              log.created_at,
+            ).toLocaleTimeString(
+              'en-IN',
+              {
+                hour:
+                  '2-digit',
+
+                minute:
+                  '2-digit',
+
+                timeZone:
+                  'Asia/Kolkata',
+              },
+            ),
+        }),
+      )
+
+    // ============================================================
+    // 12. FINAL DASHBOARD RESPONSE
+    // ============================================================
+
     return NextResponse.json({
       success: true,
+
       stats: {
+        // --------------------------------------------------------
+        // WORKFORCE
+        // --------------------------------------------------------
+
         totalEmployees,
+
         activeEmployees,
+
         onLeaveToday,
+
+        // --------------------------------------------------------
+        // APPROVALS
+        // --------------------------------------------------------
+
         pendingApprovals,
 
+        // --------------------------------------------------------
+        // PAYROLL
+        // --------------------------------------------------------
+
         estimatedGross,
-        monthlyPayrollCost: estimatedGross,
+
+        monthlyPayrollCost:
+          estimatedGross,
+
         estimatedDeductions,
+
         estimatedNet,
 
-        status: payrollStatus,
+        status:
+          payrollStatus,
 
-        departments: departmentList,
-        recentActivity: recentAuditLogs,
+        // --------------------------------------------------------
+        // ORGANIZATION
+        // --------------------------------------------------------
+
+        departments:
+          departmentList,
+
+        // --------------------------------------------------------
+        // AUDIT
+        // --------------------------------------------------------
+
+        recentActivity:
+          recentAuditLogs,
       },
     })
   } catch (error: any) {
@@ -377,28 +616,51 @@ export async function GET() {
       error,
     )
 
-    return NextResponse.json({
-      success: false,
-      stats: emptyStats(),
-    })
+    return NextResponse.json(
+      {
+        success: false,
+
+        error:
+          error?.message ||
+          'Unable to load dashboard statistics.',
+
+        stats:
+          emptyStats(),
+      },
+      {
+        status: 500,
+      },
+    )
   }
 }
+
+// ============================================================
+// EMPTY / SAFE DASHBOARD STATE
+// ============================================================
 
 function emptyStats() {
   return {
     totalEmployees: 0,
+
     activeEmployees: 0,
+
     onLeaveToday: 0,
+
     pendingApprovals: 0,
 
     estimatedGross: 0,
+
     monthlyPayrollCost: 0,
+
     estimatedDeductions: 0,
+
     estimatedNet: 0,
 
-    status: 'NOT_STARTED',
+    status:
+      'NOT_STARTED',
 
     departments: [],
+
     recentActivity: [],
   }
 }

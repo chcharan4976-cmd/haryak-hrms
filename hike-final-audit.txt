@@ -1,0 +1,1787 @@
+﻿import {
+  NextRequest,
+  NextResponse,
+} from 'next/server'
+
+import {
+  createAdminClient,
+} from '@/lib/supabase/admin'
+
+import {
+  resolveRequestContext,
+  resolveEmployeeAccess,
+  hasRole,
+} from '@/lib/services/company-resolver'
+
+import {
+  getEffectiveCompensation,
+} from '@/lib/services/compensation-service'
+
+import {
+  Decimal,
+} from '@/lib/utils/decimal'
+
+/* =========================================================
+   GET
+   ========================================================= */
+
+export async function GET(
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      employeeId: string
+    }>
+  }
+) {
+  const resolved =
+    await resolveRequestContext()
+
+  if (!resolved.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          resolved.error.message,
+      },
+      {
+        status:
+          resolved.error.status,
+      }
+    )
+  }
+
+  const {
+    context,
+  } = resolved
+
+  const {
+    employeeId,
+  } = await params
+
+  const access =
+    resolveEmployeeAccess(
+      context,
+      employeeId
+    )
+
+  if (
+    access.denied ||
+    (
+      access.employeeId &&
+      access.employeeId !==
+        employeeId
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Forbidden',
+      },
+      {
+        status: 403,
+      }
+    )
+  }
+
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Database unavailable.',
+      },
+      {
+        status: 503,
+      }
+    )
+  }
+
+  const {
+    data: structures,
+    error:
+      structureError,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .select(`
+      *,
+      salary_structure_components (
+        *,
+        component:component_id (*)
+      )
+    `)
+    .eq(
+      'company_id',
+      context.companyId
+    )
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .order(
+      'effective_from',
+      {
+        ascending: false,
+      }
+    )
+
+  if (structureError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          structureError.message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  const {
+    data:
+      statutoryDetails,
+  } = await supabase
+    .from(
+      'employee_statutory_details'
+    )
+    .select(`
+      pf_applicable,
+      uan_number,
+      pf_number,
+      pf_joining_date,
+      esi_applicable,
+      esi_number,
+      pt_applicable,
+      pt_state,
+      pt_amount,
+      tax_regime,
+      pan_masked
+    `)
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .maybeSingle()
+
+  const effective =
+    await getEffectiveCompensation(
+      employeeId,
+      context.companyId
+    )
+
+  let compensation:
+    any = null
+
+  if (
+    effective.structureId
+  ) {
+    const findComponent = (
+      ...codes: string[]
+    ) =>
+      effective.components.find(
+        (component) =>
+          codes.includes(
+            component.code.toUpperCase()
+          )
+      )
+
+    const basic =
+      findComponent(
+        'BASIC'
+      )
+
+    const hra =
+      findComponent(
+        'HRA'
+      )
+
+    const special =
+      findComponent(
+        'SPECIAL_ALLOWANCE',
+        'SPECIAL'
+      )
+
+    const conveyance =
+      findComponent(
+        'CONVEYANCE'
+      )
+
+    compensation = {
+      id:
+        effective.structureId,
+
+      ctc:
+        effective.annualCtc,
+
+      annual_ctc:
+        effective.annualCtc,
+
+      monthly_gross:
+        effective.monthlyGross,
+
+      basic_salary:
+        basic
+          ? basic.monthlyAmount
+          : null,
+
+      hra:
+        hra
+          ? hra.monthlyAmount
+          : null,
+
+      special_allowance:
+        special
+          ? special.monthlyAmount
+          : null,
+
+      conveyance_allowance:
+        conveyance
+          ? conveyance.monthlyAmount
+          : null,
+
+      /**
+       * PT comes from employee_statutory_details,
+       * not from an invented salary component.
+       */
+      pt_deduction:
+        statutoryDetails?.pt_amount ??
+        null,
+
+      pt_applicable:
+        statutoryDetails?.pt_applicable ??
+        null,
+
+      pt_state:
+        statutoryDetails?.pt_state ??
+        null,
+
+      pf_applicable:
+        statutoryDetails?.pf_applicable ??
+        null,
+
+      esi_applicable:
+        statutoryDetails?.esi_applicable ??
+        null,
+
+      pan_masked:
+        statutoryDetails?.pan_masked ??
+        null,
+
+      effective_from:
+        effective.effectiveFrom,
+
+      status:
+        effective.status,
+
+      isComplete:
+        effective.isComplete,
+
+      incompletenessReasons:
+        effective.incompletenessReasons,
+
+      grossEarningsFromComponents:
+        effective.grossEarningsFromComponents,
+
+      totalDeductionsFromComponents:
+        effective.totalDeductionsFromComponents,
+
+      components:
+        effective.components.map(
+          (component: any) => ({
+            id:
+              component.id,
+
+            componentId:
+              component.componentId,
+
+            name:
+              component.name,
+
+            code:
+              component.code,
+
+            type:
+              component.type,
+
+            category:
+              component.category,
+
+            monthly:
+              component.monthlyAmount,
+
+            monthly_amount:
+              component.monthlyAmount,
+
+            annual:
+              component.annualAmount,
+
+            annual_amount:
+              component.annualAmount,
+
+            isTaxable:
+              component.isTaxable,
+
+            isStatutory:
+              component.isStatutory,
+
+            isActive:
+              component.isActive,
+          })
+        ),
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+
+    compensation,
+
+    statutoryDetails:
+      statutoryDetails || null,
+
+    effective,
+
+    history:
+      structures || [],
+
+    data:
+      structures || [],
+  })
+}
+
+/* =========================================================
+   CREATE NEW COMPENSATION VERSION
+   ========================================================= */
+
+export async function POST(
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      employeeId: string
+    }>
+  }
+) {
+  const resolved =
+    await resolveRequestContext()
+
+  if (!resolved.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          resolved.error.message,
+      },
+      {
+        status:
+          resolved.error.status,
+      }
+    )
+  }
+
+  const {
+    context,
+  } = resolved
+
+  if (
+    !hasRole(
+      context,
+      'SUPER_ADMIN',
+      'HR_ADMIN',
+      'PAYROLL_ADMIN'
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Insufficient permissions to modify compensation.',
+      },
+      {
+        status: 403,
+      }
+    )
+  }
+
+  const {
+    employeeId,
+  } = await params
+
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Database unavailable.',
+      },
+      {
+        status: 503,
+      }
+    )
+  }
+
+  const body =
+    await request.json()
+
+  const {
+    annual_ctc,
+    monthly_gross,
+    effective_from,
+    components,
+    reason,
+
+    pt_amount,
+    pt_applicable,
+    pt_state,
+
+    allow_incomplete =
+      false,
+  } = body
+
+  const ctc =
+    Number(
+      annual_ctc || 0
+    )
+
+  const gross =
+    Number(
+      monthly_gross || 0
+    )
+
+  if (
+    !Number.isFinite(ctc) ||
+    ctc <= 0
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Annual CTC must be greater than zero.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  if (
+    !Number.isFinite(gross) ||
+    gross <= 0
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Monthly Gross must be greater than zero.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  if (gross > ctc) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Monthly Gross cannot exceed Annual CTC.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  const requestedComponents =
+    Array.isArray(components)
+      ? components
+      : []
+
+  if (
+    requestedComponents.length ===
+      0 &&
+    !allow_incomplete
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Salary components are required before activating this compensation structure.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     RESOLVE COMPONENT DEFINITIONS FIRST
+     ----------------------------------------------------- */
+
+  const resolvedComponents:
+    Array<{
+      componentId: string
+      code: string
+      name: string
+      type: string
+      monthlyAmount: number
+      annualAmount: number
+      calculationType: string
+    }> = []
+
+  for (
+    const component of requestedComponents
+  ) {
+    let code =
+      String(
+        component.code ||
+          component.component_code ||
+          ''
+      )
+        .trim()
+        .toUpperCase()
+
+    if (
+      code === 'SPECIAL'
+    ) {
+      code =
+        'SPECIAL_ALLOWANCE'
+    }
+
+    if (!code) {
+      continue
+    }
+
+    const monthlyAmount =
+      Number(
+        component.monthly_amount ??
+          component.monthly ??
+          0
+      )
+
+    if (
+      !Number.isFinite(
+        monthlyAmount
+      ) ||
+      monthlyAmount < 0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Invalid monthly amount for ${code}.`,
+        },
+        {
+          status: 400,
+        }
+      )
+    }
+
+    const {
+      data:
+        definition,
+      error:
+        definitionError,
+    } = await supabase
+      .from(
+        'salary_components'
+      )
+      .select(
+        'id, code, name, type'
+      )
+      .eq(
+        'company_id',
+        context.companyId
+      )
+      .eq(
+        'code',
+        code
+      )
+      .eq(
+        'is_active',
+        true
+      )
+      .maybeSingle()
+
+    if (
+      definitionError
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            definitionError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+
+    if (!definition) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Salary component "${code}" is not configured for this company.`,
+        },
+        {
+          status: 400,
+        }
+      )
+    }
+
+    resolvedComponents.push({
+      componentId:
+        definition.id,
+
+      code:
+        definition.code,
+
+      name:
+        definition.name,
+
+      type:
+        definition.type,
+
+      monthlyAmount,
+
+      annualAmount:
+        Number(
+          component.annual_amount ??
+            component.annual ??
+            monthlyAmount * 12
+        ),
+
+      calculationType:
+        component.calculation_type ||
+        'FLAT',
+    })
+  }
+
+  /* -----------------------------------------------------
+     GROSS RECONCILIATION
+     ----------------------------------------------------- */
+
+  const earningComponents =
+    resolvedComponents.filter(
+      (component) =>
+        component.type ===
+        'earning'
+    )
+
+  const earningsTotal =
+    earningComponents.reduce(
+      (
+        total,
+        component
+      ) =>
+        Decimal.from(total)
+          .add(
+            component.monthlyAmount
+          )
+          .toNumber(),
+      0
+    )
+
+  if (
+    earningComponents.length >
+      0 &&
+    Math.abs(
+      earningsTotal -
+        gross
+    ) > 0.01
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+
+        error:
+          `Component total â‚¹${earningsTotal.toLocaleString(
+            'en-IN'
+          )} does not match Monthly Gross â‚¹${gross.toLocaleString(
+            'en-IN'
+          )}.`,
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     PT VALIDATION
+     ----------------------------------------------------- */
+
+  const ptAmount =
+    pt_amount !== undefined &&
+    pt_amount !== null &&
+    pt_amount !== ''
+      ? Number(pt_amount)
+      : null
+
+  if (
+    ptAmount !== null &&
+    (
+      !Number.isFinite(
+        ptAmount
+      ) ||
+      ptAmount < 0
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Professional Tax must be zero or positive.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     EXISTING ACTIVE STRUCTURE
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      activeStructure,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .select(
+      'id, annual_ctc, effective_from'
+    )
+    .eq(
+      'company_id',
+      context.companyId
+    )
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .eq(
+      'status',
+      'active'
+    )
+    .maybeSingle()
+
+  const effectiveDate =
+    effective_from ||
+    new Date()
+      .toISOString()
+      .split('T')[0]
+
+  /* -----------------------------------------------------
+     CREATE REVISION RECORD
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      revision,
+    error:
+      revisionError,
+  } = await supabase
+    .from(
+      'salary_revisions'
+    )
+    .insert({
+      company_id:
+        context.companyId,
+
+      employee_id:
+        employeeId,
+
+      old_salary_structure_id:
+        activeStructure?.id ||
+        null,
+
+      old_ctc:
+        activeStructure?.annual_ctc ||
+        0,
+
+      new_ctc:
+        ctc,
+
+      increment_amount:
+        ctc -
+        (
+          activeStructure?.annual_ctc ||
+          0
+        ),
+
+      increment_percentage:
+        activeStructure?.annual_ctc
+          ? (
+              (
+                ctc -
+                activeStructure.annual_ctc
+              ) /
+              activeStructure.annual_ctc
+            ) *
+            100
+          : 0,
+
+      effective_date:
+        effectiveDate,
+
+      reason:
+        reason ||
+        'Compensation structure revision',
+
+      status:
+        'activated',
+
+      requested_by:
+        context.authUserId,
+
+      approved_by:
+        context.authUserId,
+
+      approved_at:
+        new Date().toISOString(),
+    })
+    .select('id')
+    .single()
+
+  if (
+    revisionError ||
+    !revision
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          revisionError?.message ||
+          'Unable to create compensation revision.',
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     CREATE NEW STRUCTURE
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      newStructure,
+    error:
+      structureError,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .insert({
+      company_id:
+        context.companyId,
+
+      employee_id:
+        employeeId,
+
+      annual_ctc:
+        ctc,
+
+      monthly_gross:
+        gross,
+
+      effective_from:
+        effectiveDate,
+
+      status:
+        'active',
+
+      revision_id:
+        revision.id,
+
+      notes:
+        resolvedComponents.length ===
+        0
+          ? 'Salary structure incomplete.'
+          : null,
+
+      created_by:
+        context.authUserId,
+    })
+    .select('id')
+    .single()
+
+  if (
+    structureError ||
+    !newStructure
+  ) {
+    await supabase
+      .from(
+        'salary_revisions'
+      )
+      .delete()
+      .eq(
+        'id',
+        revision.id
+      )
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          structureError?.message ||
+          'Unable to create salary structure.',
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     COMPONENTS
+     ----------------------------------------------------- */
+
+  if (
+    resolvedComponents.length >
+    0
+  ) {
+    const rows =
+      resolvedComponents.map(
+        (component) => ({
+          salary_structure_id:
+            newStructure.id,
+
+          component_id:
+            component.componentId,
+
+          monthly_amount:
+            component.monthlyAmount,
+
+          annual_amount:
+            component.annualAmount,
+
+          calculation_type:
+            component.calculationType,
+
+          is_active:
+            true,
+        })
+      )
+
+    const {
+      error:
+        componentError,
+    } = await supabase
+      .from(
+        'salary_structure_components'
+      )
+      .insert(rows)
+
+    if (componentError) {
+      await supabase
+        .from(
+          'salary_structures'
+        )
+        .delete()
+        .eq(
+          'id',
+          newStructure.id
+        )
+
+      await supabase
+        .from(
+          'salary_revisions'
+        )
+        .delete()
+        .eq(
+          'id',
+          revision.id
+        )
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            componentError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  /* -----------------------------------------------------
+     UPDATE PT CONFIGURATION
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      existingStatutory,
+  } = await supabase
+    .from(
+      'employee_statutory_details'
+    )
+    .select('id')
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .maybeSingle()
+
+  const ptApplicable =
+    typeof pt_applicable ===
+    'boolean'
+      ? pt_applicable
+      : ptAmount !== null &&
+        ptAmount > 0
+
+  if (
+    existingStatutory
+  ) {
+    const {
+      error:
+        statutoryError,
+    } = await supabase
+      .from(
+        'employee_statutory_details'
+      )
+      .update({
+        pt_applicable:
+          ptApplicable,
+
+        pt_amount:
+          ptAmount,
+
+        pt_state:
+          ptApplicable
+            ? pt_state ||
+              'Telangana'
+            : null,
+      })
+      .eq(
+        'id',
+        existingStatutory.id
+      )
+
+    if (statutoryError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            statutoryError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  } else {
+    const {
+      error:
+        statutoryError,
+    } = await supabase
+      .from(
+        'employee_statutory_details'
+      )
+      .insert({
+        employee_id:
+          employeeId,
+
+        pt_applicable:
+          ptApplicable,
+
+        pt_amount:
+          ptAmount,
+
+        pt_state:
+          ptApplicable
+            ? pt_state ||
+              'Telangana'
+            : null,
+      })
+
+    if (statutoryError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            statutoryError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  /* -----------------------------------------------------
+     SUPERSEDE PREVIOUS STRUCTURE ONLY AFTER SUCCESS
+     ----------------------------------------------------- */
+
+  if (activeStructure) {
+    const previousEnd =
+      new Date(
+        new Date(
+          effectiveDate
+        ).getTime() -
+          86_400_000
+      )
+        .toISOString()
+        .split('T')[0]
+
+    const {
+      error:
+        supersedeError,
+    } = await supabase
+      .from(
+        'salary_structures'
+      )
+      .update({
+        status:
+          'superseded',
+
+        effective_until:
+          previousEnd,
+      })
+      .eq(
+        'id',
+        activeStructure.id
+      )
+
+    if (supersedeError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            supersedeError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  await supabase
+    .from(
+      'salary_revisions'
+    )
+    .update({
+      new_salary_structure_id:
+        newStructure.id,
+    })
+    .eq(
+      'id',
+      revision.id
+    )
+
+  /* -----------------------------------------------------
+     FINAL CANONICAL RESULT
+     ----------------------------------------------------- */
+
+  const updated =
+    await getEffectiveCompensation(
+      employeeId,
+      context.companyId
+    )
+
+  return NextResponse.json({
+    success: true,
+
+    message:
+      updated.isComplete
+        ? 'Salary structure updated successfully.'
+        : 'Salary structure saved but remains incomplete.',
+
+    compensation:
+      updated,
+  })
+}
+
+================ PAYROLL APPROVE ================
+
+import { NextResponse } from 'next/server'
+import { createAdminClient } from '@/lib/supabase/admin'
+import { resolveRequestContext } from '@/lib/services/company-resolver'
+import { createAuditLog } from '@/lib/services/audit-service'
+import { amountToWords } from '@/lib/utils/amount-to-words'
+import { formatHumanDate, formatPeriodRange } from '@/lib/utils/format'
+
+function maskBankAccount(accountStr: string | null) {
+  if (!accountStr || accountStr.length < 4) return 'Not provided'
+  return '*'.repeat(Math.max(0, accountStr.length - 4)) + accountStr.slice(-4)
+}
+
+export async function POST(request: Request) {
+  const auth = await resolveRequestContext()
+  if (!auth.ok) return NextResponse.json({ success: false, error: auth.error.message }, { status: auth.error.status })
+
+  const { companyId, roles, authUserId, email, fullName } = auth.context
+  if (!roles.some(r => ['SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN'].includes(r))) {
+    return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 403 })
+  }
+
+  const body = await request.json()
+  const { payroll_run_id } = body
+  if (!payroll_run_id) return NextResponse.json({ success: false, error: 'Missing payroll_run_id' }, { status: 400 })
+
+  const admin = createAdminClient()
+  if (!admin) return NextResponse.json({ success: false, error: 'Database error' }, { status: 500 })
+
+  const { data: run, error: runErr } = await admin
+    .from('payroll_runs')
+    .select('*, payroll_period:payroll_periods(*)')
+    .eq('id', payroll_run_id)
+    .eq('company_id', companyId)
+    .single()
+    
+  if (runErr || !run) return NextResponse.json({ success: false, error: 'Payroll run not found' }, { status: 404 })
+
+  if (run.status === 'approved' || run.status === 'locked') {
+    return NextResponse.json({ success: false, error: 'Payroll run is already approved/locked' }, { status: 400 })
+  }
+
+  // 1. Fetch all records and validate deduction reconciliation invariant & bank accounts
+  const { data: records, error: recErr } = await admin
+    .from('payroll_employee_records')
+    .select(`
+      *,
+      payroll_earnings(*),
+      payroll_deductions(*),
+      employee:employees(
+        *,
+        employee_bank_accounts(*),
+        employee_statutory_details(*)
+      )
+    `)
+    .eq('payroll_run_id', payroll_run_id)
+
+  if (recErr) return NextResponse.json({ success: false, error: recErr.message }, { status: 500 })
+
+  for (const record of records || []) {
+    // Check if record has unaddressed errors
+    if (record.status === 'error' || (record.errors && record.errors.length > 0)) {
+      return NextResponse.json({
+        success: false,
+        error: `Cannot approve payroll run: Employee ${record.employee_code} has errors: ${(record.errors || []).map((e: any) => e.message || e.code).join(', ')}`,
+        employee: record.employee_code,
+      }, { status: 400 })
+    }
+
+    // Check bank account blocker for Direct Bank Transfer
+    const primaryBank = record.employee?.employee_bank_accounts?.find((b: any) => b.is_primary) || record.employee?.employee_bank_accounts?.[0]
+    const hasBank = primaryBank && (primaryBank.account_number_masked || primaryBank.account_number_encrypted || primaryBank.account_number)
+    const paymentMode = record.payment_mode || 'Direct Bank Transfer'
+    if (paymentMode.toLowerCase().includes('bank') && !hasBank) {
+      return NextResponse.json({
+        success: false,
+        error: `Bank account missing for ${record.employee_name} (${record.employee_code}): Direct Bank Transfer payout requires an active bank account. Approval blocked.`,
+        employee: record.employee_code,
+      }, { status: 400 })
+    }
+
+    const sumDeductions = (record.payroll_deductions || []).reduce((sum: number, d: any) => sum + Number(d.amount), 0)
+    const expectedDeductions = Number(record.total_deductions)
+    if (Math.abs(sumDeductions - expectedDeductions) > 0.01) {
+      return NextResponse.json({
+        success: false,
+        error: `Deduction reconciliation mismatch for ${record.employee_name} (${record.employee_code}): Total deductions (â‚¹${expectedDeductions}) does not match sum of deduction lines (â‚¹${sumDeductions}). Approval blocked.`,
+        employee: record.employee_code,
+        expectedDeductions,
+        sumDeductions,
+        deductionLines: record.payroll_deductions,
+      }, { status: 400 })
+    }
+  }
+
+  // 2. Lock and approve
+  const { error: updateErr } = await admin
+    .from('payroll_runs')
+    .update({
+      status: 'approved',
+      approved_at: new Date().toISOString(),
+      approved_by: authUserId,
+      locked_at: new Date().toISOString(),
+      locked_by: authUserId,
+    })
+    .eq('id', payroll_run_id)
+
+  if (updateErr) return NextResponse.json({ success: false, error: updateErr.message }, { status: 500 })
+
+  const payslips = []
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+  const monthName = monthNames[run.payroll_period.period_month - 1]
+
+  for (const record of records || []) {
+    const primaryBank = record.employee?.employee_bank_accounts?.find((b: any) => b.is_primary) || record.employee?.employee_bank_accounts?.[0]
+    const statutory = record.employee?.employee_statutory_details?.[0]
+    
+    // Construct immutable snapshot
+    const earningsList = (record.payroll_earnings || []).map((e: any) => ({
+      name: e.component_name,
+      amount: Number(e.final_amount),
+    }))
+
+    const deductionsList = (record.payroll_deductions || []).map((d: any) => ({
+      name: d.component_name,
+      amount: Number(d.amount),
+    }))
+
+    const snapshot_data = {
+      employeeId: record.employee_code,
+      employeeName: record.employee_name,
+      department: record.department_name || '',
+      designation: record.designation_name || '',
+      dateOfJoining: formatHumanDate(record.joining_date),
+      joiningDate: record.joining_date || '',
+      bankName: primaryBank?.bank_name || 'Not provided',
+      bankAccountNo: primaryBank?.account_number_masked || (primaryBank?.account_number_encrypted ? maskBankAccount(primaryBank.account_number_encrypted) : 'Not provided'),
+      bankAccountMasked: primaryBank?.account_number_masked || (primaryBank?.account_number_encrypted ? maskBankAccount(primaryBank.account_number_encrypted) : 'Not provided'),
+      ifscCode: primaryBank?.ifsc_code || 'Not provided',
+      pan: statutory?.pan_masked || statutory?.pan_number || 'Not provided',
+      uanOrPFNo: statutory?.uan_number || statutory?.pf_number || 'Not provided',
+      paidDays: Number(record.paid_days),
+      lopDays: Number(record.lop_days),
+      paymentMode: 'Direct Bank Transfer',
+      payPeriod: formatPeriodRange(run.payroll_period.start_date, run.payroll_period.end_date),
+      payMonth: `${monthName} ${run.payroll_period.period_year}`,
+      earnings: earningsList,
+      deductions: deductionsList,
+      grossEarnings: Number(record.gross_earnings),
+      totalDeductions: Number(record.total_deductions),
+      netSalary: Number(record.net_salary),
+      annualCTC: Number(record.annual_ctc || 0),
+      ytdGrossEarnings: Number(record.gross_earnings),
+      ytdPFContribution: Number(deductionsList.find((d: any) => d.name.toLowerCase().includes('pf') || d.name.toLowerCase().includes('provident'))?.amount || 0),
+      ytdProfessionalTax: Number(deductionsList.find((d: any) => d.name.toLowerCase().includes('pt') || d.name.toLowerCase().includes('professional'))?.amount || 0),
+      ytdIncomeTax: Number(deductionsList.find((d: any) => d.name.toLowerCase().includes('tds') || d.name.toLowerCase().includes('income tax'))?.amount || 0),
+      ytdNetPay: Number(record.net_salary),
+    }
+
+    const filename = `Haryak_Payslip_${record.employee_code}_${monthName}_${run.payroll_period.period_year}.pdf`
+
+    payslips.push({
+      company_id: companyId,
+      employee_id: record.employee_id,
+      payroll_run_id: payroll_run_id,
+      payroll_employee_record_id: record.id,
+      period_month: run.payroll_period.period_month,
+      period_year: run.payroll_period.period_year,
+      pay_period_start: run.payroll_period.start_date,
+      pay_period_end: run.payroll_period.end_date,
+      snapshot_data,
+      net_salary: record.net_salary,
+      amount_in_words: amountToWords(Number(record.net_salary)),
+      filename,
+      status: 'generated',
+    })
+  }
+
+  if (payslips.length > 0) {
+    const { error: psErr } = await admin
+      .from('payslips')
+      .upsert(payslips, { onConflict: 'company_id,employee_id,period_month,period_year' })
+    if (psErr) {
+      console.error('Error upserting payslips:', psErr)
+    }
+  }
+
+  await createAuditLog({
+    companyId,
+    userId: authUserId,
+    userEmail: email,
+    userName: fullName,
+    action: 'approved',
+    entityType: 'payroll_run',
+    entityId: payroll_run_id,
+    description: `Approved and locked payroll run for ${run.payroll_period.period_month}/${run.payroll_period.period_year}`,
+  })
+
+  return NextResponse.json({
+    success: true,
+    message: 'Payroll approved and locked successfully',
+    payslipsGenerated: payslips.length,
+  }, { status: 200 })
+}
+
+================ PAYSLIP REFERENCES ================
+
+
+  src\app\(dashboard)\reports\page.tsx:1119:      return payslips.map(
+  src\app\(dashboard)\reports\page.tsx:1120:        (
+  src\app\(dashboard)\reports\page.tsx:1121:          payslip: any,
+  src\app\(dashboard)\reports\page.tsx:1122:        ): PayrollReportRow => {
+  src\app\(dashboard)\reports\page.tsx:1123:          const snapshot =
+> src\app\(dashboard)\reports\page.tsx:1124:            payslip.snapshot_data ||
+  src\app\(dashboard)\reports\page.tsx:1125:            payslip.snapshot ||
+  src\app\(dashboard)\reports\page.tsx:1126:            {}
+  src\app\(dashboard)\reports\page.tsx:1127:
+  src\app\(dashboard)\reports\page.tsx:1128:          return {
+  src\app\(dashboard)\reports\page.tsx:1129:            employeeId:
+  src\app\(dashboard)\reports\page.tsx:1130:              payslip.employee_id ||
+  src\app\(dashboard)\reports\page.tsx:1131:              '',
+  src\app\(dashboard)\reports\page.tsx:1132:
+  src\app\(dashboard)\reports\page.tsx:1133:            employeeCode:
+  src\app\(dashboard)\reports\page.tsx:1134:              snapshot.employeeId ||
+  src\app\(dashboard)\reports\page.tsx:1135:              snapshot.employeeCode ||
+  src\app\(dashboard)\reports\page.tsx:1136:              '',
+  src\app\api\compensation\[employeeId]\route.ts:796:      revision,
+  src\app\api\compensation\[employeeId]\route.ts:797:    error:
+  src\app\api\compensation\[employeeId]\route.ts:798:      revisionError,
+  src\app\api\compensation\[employeeId]\route.ts:799:  } = await supabase
+  src\app\api\compensation\[employeeId]\route.ts:800:    .from(
+> src\app\api\compensation\[employeeId]\route.ts:801:      'salary_revisions'
+  src\app\api\compensation\[employeeId]\route.ts:802:    )
+  src\app\api\compensation\[employeeId]\route.ts:803:    .insert({
+  src\app\api\compensation\[employeeId]\route.ts:804:      company_id:
+  src\app\api\compensation\[employeeId]\route.ts:805:        context.companyId,
+  src\app\api\compensation\[employeeId]\route.ts:806:
+  src\app\api\compensation\[employeeId]\route.ts:807:      employee_id:
+  src\app\api\compensation\[employeeId]\route.ts:808:        employeeId,
+  src\app\api\compensation\[employeeId]\route.ts:809:
+  src\app\api\compensation\[employeeId]\route.ts:810:      old_salary_structure_id:
+  src\app\api\compensation\[employeeId]\route.ts:811:        activeStructure?.id ||
+  src\app\api\compensation\[employeeId]\route.ts:812:        null,
+  src\app\api\compensation\[employeeId]\route.ts:813:
+  src\app\api\compensation\[employeeId]\route.ts:927:    structureError ||
+  src\app\api\compensation\[employeeId]\route.ts:928:    !newStructure
+  src\app\api\compensation\[employeeId]\route.ts:929:  ) {
+  src\app\api\compensation\[employeeId]\route.ts:930:    await supabase
+  src\app\api\compensation\[employeeId]\route.ts:931:      .from(
+> src\app\api\compensation\[employeeId]\route.ts:932:        'salary_revisions'
+  src\app\api\compensation\[employeeId]\route.ts:933:      )
+  src\app\api\compensation\[employeeId]\route.ts:934:      .delete()
+  src\app\api\compensation\[employeeId]\route.ts:935:      .eq(
+  src\app\api\compensation\[employeeId]\route.ts:936:        'id',
+  src\app\api\compensation\[employeeId]\route.ts:937:        revision.id
+  src\app\api\compensation\[employeeId]\route.ts:938:      )
+  src\app\api\compensation\[employeeId]\route.ts:939:
+  src\app\api\compensation\[employeeId]\route.ts:940:    return NextResponse.json(
+  src\app\api\compensation\[employeeId]\route.ts:941:      {
+  src\app\api\compensation\[employeeId]\route.ts:942:        success: false,
+  src\app\api\compensation\[employeeId]\route.ts:943:        error:
+  src\app\api\compensation\[employeeId]\route.ts:944:          structureError?.message ||
+  src\app\api\compensation\[employeeId]\route.ts:1001:          newStructure.id
+  src\app\api\compensation\[employeeId]\route.ts:1002:        )
+  src\app\api\compensation\[employeeId]\route.ts:1003:
+  src\app\api\compensation\[employeeId]\route.ts:1004:      await supabase
+  src\app\api\compensation\[employeeId]\route.ts:1005:        .from(
+> src\app\api\compensation\[employeeId]\route.ts:1006:          'salary_revisions'
+  src\app\api\compensation\[employeeId]\route.ts:1007:        )
+  src\app\api\compensation\[employeeId]\route.ts:1008:        .delete()
+  src\app\api\compensation\[employeeId]\route.ts:1009:        .eq(
+  src\app\api\compensation\[employeeId]\route.ts:1010:          'id',
+  src\app\api\compensation\[employeeId]\route.ts:1011:          revision.id
+  src\app\api\compensation\[employeeId]\route.ts:1012:        )
+  src\app\api\compensation\[employeeId]\route.ts:1013:
+  src\app\api\compensation\[employeeId]\route.ts:1014:      return NextResponse.json(
+  src\app\api\compensation\[employeeId]\route.ts:1015:        {
+  src\app\api\compensation\[employeeId]\route.ts:1016:          success: false,
+  src\app\api\compensation\[employeeId]\route.ts:1017:          error:
+  src\app\api\compensation\[employeeId]\route.ts:1018:            componentError.message,
+  src\app\api\compensation\[employeeId]\route.ts:1176:    }
+  src\app\api\compensation\[employeeId]\route.ts:1177:  }
+  src\app\api\compensation\[employeeId]\route.ts:1178:
+  src\app\api\compensation\[employeeId]\route.ts:1179:  await supabase
+  src\app\api\compensation\[employeeId]\route.ts:1180:    .from(
+> src\app\api\compensation\[employeeId]\route.ts:1181:      'salary_revisions'
+  src\app\api\compensation\[employeeId]\route.ts:1182:    )
+  src\app\api\compensation\[employeeId]\route.ts:1183:    .update({
+  src\app\api\compensation\[employeeId]\route.ts:1184:      new_salary_structure_id:
+  src\app\api\compensation\[employeeId]\route.ts:1185:        newStructure.id,
+  src\app\api\compensation\[employeeId]\route.ts:1186:    })
+  src\app\api\compensation\[employeeId]\route.ts:1187:    .eq(
+  src\app\api\compensation\[employeeId]\route.ts:1188:      'id',
+  src\app\api\compensation\[employeeId]\route.ts:1189:      revision.id
+  src\app\api\compensation\[employeeId]\route.ts:1190:    )
+  src\app\api\compensation\[employeeId]\route.ts:1191:
+  src\app\api\compensation\[employeeId]\route.ts:1192:  /* -----------------------------------------------------
+  src\app\api\compensation\[employeeId]\route.ts:1193:     FINAL CANONICAL RESULT
+  src\app\api\payroll\approve\route.ts:123:    const deductionsList = (record.payroll_deductions || []).map((d: any) => ({
+  src\app\api\payroll\approve\route.ts:124:      name: d.component_name,
+  src\app\api\payroll\approve\route.ts:125:      amount: Number(d.amount),
+  src\app\api\payroll\approve\route.ts:126:    }))
+  src\app\api\payroll\approve\route.ts:127:
+> src\app\api\payroll\approve\route.ts:128:    const snapshot_data = {
+  src\app\api\payroll\approve\route.ts:129:      employeeId: record.employee_code,
+  src\app\api\payroll\approve\route.ts:130:      employeeName: record.employee_name,
+  src\app\api\payroll\approve\route.ts:131:      department: record.department_name || '',
+  src\app\api\payroll\approve\route.ts:132:      designation: record.designation_name || '',
+  src\app\api\payroll\approve\route.ts:133:      dateOfJoining: formatHumanDate(record.joining_date),
+  src\app\api\payroll\approve\route.ts:134:      joiningDate: record.joining_date || '',
+  src\app\api\payroll\approve\route.ts:135:      bankName: primaryBank?.bank_name || 'Not provided',
+  src\app\api\payroll\approve\route.ts:136:      bankAccountNo: primaryBank?.account_number_masked || (primaryBank?.account_number_encrypted ? maskBankAccount(primaryBank.account_number_encrypted) : 'Not provided'),
+  src\app\api\payroll\approve\route.ts:137:      bankAccountMasked: primaryBank?.account_number_masked || (primaryBank?.account_number_encrypted ? maskBankAccount(primaryBank.account_number_encrypted) : 'Not provided'),
+  src\app\api\payroll\approve\route.ts:138:      ifscCode: primaryBank?.ifsc_code || 'Not provided',
+  src\app\api\payroll\approve\route.ts:139:      pan: statutory?.pan_masked || statutory?.pan_number || 'Not provided',
+  src\app\api\payroll\approve\route.ts:140:      uanOrPFNo: statutory?.uan_number || statutory?.pf_number || 'Not provided',
+  src\app\api\payroll\approve\route.ts:165:      payroll_employee_record_id: record.id,
+  src\app\api\payroll\approve\route.ts:166:      period_month: run.payroll_period.period_month,
+  src\app\api\payroll\approve\route.ts:167:      period_year: run.payroll_period.period_year,
+  src\app\api\payroll\approve\route.ts:168:      pay_period_start: run.payroll_period.start_date,
+  src\app\api\payroll\approve\route.ts:169:      pay_period_end: run.payroll_period.end_date,
+> src\app\api\payroll\approve\route.ts:170:      snapshot_data,
+  src\app\api\payroll\approve\route.ts:171:      net_salary: record.net_salary,
+  src\app\api\payroll\approve\route.ts:172:      amount_in_words: amountToWords(Number(record.net_salary)),
+  src\app\api\payroll\approve\route.ts:173:      filename,
+  src\app\api\payroll\approve\route.ts:174:      status: 'generated',
+  src\app\api\payroll\approve\route.ts:175:    })
+  src\app\api\payroll\approve\route.ts:176:  }
+  src\app\api\payroll\approve\route.ts:177:
+  src\app\api\payroll\approve\route.ts:178:  if (payslips.length > 0) {
+  src\app\api\payroll\approve\route.ts:179:    const { error: psErr } = await admin
+> src\app\api\payroll\approve\route.ts:180:      .from('payslips')
+  src\app\api\payroll\approve\route.ts:181:      .upsert(payslips, { onConflict: 'company_id,employee_id,period_month,period_year' })
+  src\app\api\payroll\approve\route.ts:182:    if (psErr) {
+  src\app\api\payroll\approve\route.ts:183:      console.error('Error upserting payslips:', psErr)
+  src\app\api\payroll\approve\route.ts:184:    }
+  src\app\api\payroll\approve\route.ts:185:  }
+  src\app\api\payroll\approve\route.ts:186:
+  src\app\api\payroll\approve\route.ts:187:  await createAuditLog({
+  src\app\api\payroll\approve\route.ts:188:    companyId,
+  src\app\api\payroll\approve\route.ts:189:    userId: authUserId,
+  src\app\api\payroll\approve\route.ts:190:    userEmail: email,
+  src\app\api\payroll\approve\route.ts:191:    userName: fullName,
+  src\app\api\payroll\approve\route.ts:192:    action: 'approved',
+  src\app\api\payslips\[id]\route.ts:15:
+  src\app\api\payslips\[id]\route.ts:16:  const supabase = createAdminClient()
+  src\app\api\payslips\[id]\route.ts:17:  if (!supabase) return NextResponse.json({ success: false, error: 'Database unavailable' }, { status: 503 })
+  src\app\api\payslips\[id]\route.ts:18:
+  src\app\api\payslips\[id]\route.ts:19:  const { data, error } = await supabase
+> src\app\api\payslips\[id]\route.ts:20:    .from('payslips')
+  src\app\api\payslips\[id]\route.ts:21:    .select('*, employees(employee_code, full_name)')
+  src\app\api\payslips\[id]\route.ts:22:    .eq('company_id', context.companyId)
+  src\app\api\payslips\[id]\route.ts:23:    .eq('id', id)
+  src\app\api\payslips\[id]\route.ts:24:    .single()
+  src\app\api\payslips\[id]\route.ts:25:
+  src\app\api\payslips\[id]\route.ts:26:  if (error || !data) {
+  src\app\api\payslips\[id]\route.ts:27:    return NextResponse.json({ success: false, error: 'Payslip not found' }, { status: 404 })
+  src\app\api\payslips\[id]\route.ts:28:  }
+  src\app\api\payslips\[id]\route.ts:29:
+  src\app\api\payslips\[id]\route.ts:30:  const access = resolveEmployeeAccess(context, data.employee_id)
+  src\app\api\payslips\[id]\route.ts:31:  if (access.denied || (access.employeeId && access.employeeId !== data.employee_id)) {
+  src\app\api\payslips\[id]\route.ts:32:    return NextResponse.json({ success: false, error: 'Forbidden' }, { status: 403 })
+  src\app\api\payslips\route.ts:32:
+  src\app\api\payslips\route.ts:33:  const supabase = createAdminClient()
+  src\app\api\payslips\route.ts:34:  if (!supabase) return NextResponse.json({ success: false, error: 'Database unavailable' }, { status: 503 })
+  src\app\api\payslips\route.ts:35:
+  src\app\api\payslips\route.ts:36:  let query = supabase
+> src\app\api\payslips\route.ts:37:    .from('payslips')
+  src\app\api\payslips\route.ts:38:    .select(`
+  src\app\api\payslips\route.ts:39:      *,
+  src\app\api\payslips\route.ts:40:      employees (
+  src\app\api\payslips\route.ts:41:        id,
+  src\app\api\payslips\route.ts:42:        employee_code,
+  src\app\api\payslips\route.ts:43:        full_name,
+  src\app\api\payslips\route.ts:44:        departments:department_id(name),
+  src\app\api\payslips\route.ts:45:        designations:designation_id(name)
+  src\app\api\payslips\route.ts:46:      )
+  src\app\api\payslips\route.ts:47:    `)
+  src\app\api\payslips\route.ts:48:    .eq('company_id', context.companyId)
+  src\app\api\payslips\route.ts:49:    .order('period_year', { ascending: false })
+  src\app\api\payslips\route.ts:75:    'July', 'August', 'September', 'October', 'November', 'December'
+  src\app\api\payslips\route.ts:76:  ]
+  src\app\api\payslips\route.ts:77:
+  src\app\api\payslips\route.ts:78:  const formattedPayslips = (data || []).map((p: any) => {
+  src\app\api\payslips\route.ts:79:    const periodName = p.period_month && p.period_year ? `${MONTH_NAMES[p.period_month - 1]} ${p.period_year}` : ''
+> src\app\api\payslips\route.ts:80:    const grossEarnings = Number(p.snapshot_data?.grossEarnings ?? p.gross_salary ?? 0)
+> src\app\api\payslips\route.ts:81:    const totalDeductions = Number(p.snapshot_data?.totalDeductions ?? p.total_deductions ?? 0)
+  src\app\api\payslips\route.ts:82:
+  src\app\api\payslips\route.ts:83:    return {
+  src\app\api\payslips\route.ts:84:      id: p.id,
+  src\app\api\payslips\route.ts:85:      employee_id: p.employee_id,
+  src\app\api\payslips\route.ts:86:      period_month: p.period_month,
+  src\app\api\payslips\route.ts:87:      period_year: p.period_year,
+  src\app\api\payslips\route.ts:88:      period: periodName,
+  src\app\api\payslips\route.ts:89:      net_salary: Number(p.net_salary),
+  src\app\api\payslips\route.ts:90:      gross_earnings: grossEarnings,
+  src\app\api\payslips\route.ts:91:      gross_salary: grossEarnings,
+  src\app\api\payslips\route.ts:92:      total_deductions: totalDeductions,
+  src\app\api\payslips\route.ts:93:      status: p.status || 'generated',
+  src\app\api\payslips\route.ts:94:      pdf_url: p.pdf_url,
+  src\app\api\payslips\route.ts:95:      created_at: p.created_at,
+> src\app\api\payslips\route.ts:96:      snapshot_data: p.snapshot_data,
+  src\app\api\payslips\route.ts:97:      employee: {
+  src\app\api\payslips\route.ts:98:        id: p.employees?.id || p.employee_id,
+> src\app\api\payslips\route.ts:99:        code: p.employees?.employee_code || p.snapshot_data?.employeeId || '',
+> src\app\api\payslips\route.ts:100:        employee_code: p.employees?.employee_code || p.snapshot_data?.employeeId || '',
+> src\app\api\payslips\route.ts:101:        name: p.employees?.full_name || p.snapshot_data?.employeeName || 'Employee',
+> src\app\api\payslips\route.ts:102:        full_name: p.employees?.full_name || p.snapshot_data?.employeeName || 'Employee',
+> src\app\api\payslips\route.ts:103:        department: p.employees?.departments?.name || p.snapshot_data?.department || '',
+> src\app\api\payslips\route.ts:104:        designation: p.employees?.designations?.name || p.snapshot_data?.designation || '',
+  src\app\api\payslips\route.ts:105:      },
+  src\app\api\payslips\route.ts:106:    }
+  src\app\api\payslips\route.ts:107:  })
+  src\app\api\payslips\route.ts:108:
+  src\app\api\payslips\route.ts:109:  return NextResponse.json({
+  src\app\api\payslips\route.ts:110:    success: true,
+  src\app\api\payslips\route.ts:111:    payslips: formattedPayslips,
+  src\app\api\payslips\route.ts:112:    data: formattedPayslips,
+  src\app\api\payslips\route.ts:113:    total: formattedPayslips.length,
+  src\app\api\payslips\route.ts:114:  })
+  src\app\api\payslips\route.ts:115:}
+  src\app\payslips\[id]\print\page.tsx:39:            res = await fetch(`/api/payslips/${matched.id}`)
+  src\app\payslips\[id]\print\page.tsx:40:            data = await res.json()
+  src\app\payslips\[id]\print\page.tsx:41:          }
+  src\app\payslips\[id]\print\page.tsx:42:        }
+  src\app\payslips\[id]\print\page.tsx:43:
+> src\app\payslips\[id]\print\page.tsx:44:        if (!data.payslip || !data.payslip.snapshot_data) {
+  src\app\payslips\[id]\print\page.tsx:45:          setErrorMessage('No finalized payslip record found for this request. Payslips are only generated and viewable after payroll finalization.')
+  src\app\payslips\[id]\print\page.tsx:46:          setPayslipData(null)
+  src\app\payslips\[id]\print\page.tsx:47:          return
+  src\app\payslips\[id]\print\page.tsx:48:        }
+  src\app\payslips\[id]\print\page.tsx:49:
+> src\app\payslips\[id]\print\page.tsx:50:        const snapshot = data.payslip.snapshot_data
+  src\app\payslips\[id]\print\page.tsx:51:        const empCode = snapshot.employeeId || data.payslip.employees?.employee_code || id
+  src\app\payslips\[id]\print\page.tsx:52:        const empName = snapshot.employeeName || data.payslip.employees?.full_name || 'Employee'
+  src\app\payslips\[id]\print\page.tsx:53:
+  src\app\payslips\[id]\print\page.tsx:54:        // Construct clean PayslipData from immutable snapshot
+  src\app\payslips\[id]\print\page.tsx:55:        const reconstructed: PayslipData = {
+  src\app\payslips\[id]\print\page.tsx:56:          companyName: 'Haryak Technologies India Private Limited',
+  src\app\payslips\[id]\print\page.tsx:57:          companyTagline: "Empowering Tomorrow's Solutions, Today",
+  src\app\payslips\[id]\print\page.tsx:58:          companyLogoUrl: '/logo.jpg',
+  src\app\payslips\[id]\print\page.tsx:59:          companyWebsite: 'https://haryak.com',
+  src\app\payslips\[id]\print\page.tsx:60:          employeeName: empName,
+  src\app\payslips\[id]\print\page.tsx:61:          employeeId: empCode,
+  src\app\payslips\[id]\print\page.tsx:62:          designation: snapshot.designation || 'Not assigned',
+  src\lib\ai\ai-service.ts:85:        message: 'Your employee record is not linked or database is unavailable. Please check with HR.',
+  src\lib\ai\ai-service.ts:86:      }
+  src\lib\ai\ai-service.ts:87:    }
+  src\lib\ai\ai-service.ts:88:
+  src\lib\ai\ai-service.ts:89:    const { data: payslip } = await supabase
+> src\lib\ai\ai-service.ts:90:      .from('payslips')
+  src\lib\ai\ai-service.ts:91:      .select('*, payroll_runs:payroll_run_id(period_start, period_end)')
+  src\lib\ai\ai-service.ts:92:      .eq('company_id', context.companyId)
+  src\lib\ai\ai-service.ts:93:      .eq('employee_id', context.employeeId)
+  src\lib\ai\ai-service.ts:94:      .order('created_at', { ascending: false })
+  src\lib\ai\ai-service.ts:95:      .limit(1)
+  src\lib\ai\ai-service.ts:96:      .maybeSingle()
+  src\lib\ai\ai-service.ts:97:
+  src\lib\ai\ai-service.ts:98:    if (!payslip) {
+  src\lib\ai\ai-service.ts:99:      return {
+  src\lib\ai\ai-service.ts:100:        message: 'You currently have no published payslips in the system. When monthly payroll is approved and released, your itemized payslip breakdown will appear here.',
+  src\lib\ai\ai-service.ts:101:        toolUsed: 'getMyPayslip',
+  src\lib\ai\ai-service.ts:102:      }
+  src\lib\ai\ai-service.ts:103:    }
+  src\lib\ai\ai-service.ts:104:
+> src\lib\ai\ai-service.ts:105:    const snap = payslip.snapshot_data || {}
+  src\lib\ai\ai-service.ts:106:    const gross = snap.grossEarnings || snap.gross_earnings || payslip.gross_salary || payslip.gross_earnings || 0
+  src\lib\ai\ai-service.ts:107:    const deductions = snap.totalDeductions || snap.total_deductions || payslip.total_deductions || 0
+  src\lib\ai\ai-service.ts:108:    const net = snap.netSalary || snap.net_pay || payslip.net_salary || 0
+  src\lib\ai\ai-service.ts:109:    const month = payslip.period_month || payslip.month || (new Date().getMonth() + 1)
+  src\lib\ai\ai-service.ts:110:    const year = payslip.period_year || payslip.year || new Date().getFullYear()
+  src\lib\ai\ai-service.ts:111:
+  src\lib\ai\ai-service.ts:112:    await createAuditLog({
+  src\lib\ai\ai-service.ts:113:      companyId: context.companyId,
+  src\lib\ai\ai-service.ts:114:      userId: context.authUserId,
+  src\lib\ai\ai-service.ts:115:      userEmail: context.email,
+  src\lib\ai\ai-service.ts:116:      userName: context.fullName,
+  src\lib\ai\ai-service.ts:117:      action: 'viewed',
+  src\lib\services\employee-service.ts:135:    }
+  src\lib\services\employee-service.ts:136:  }
+  src\lib\services\employee-service.ts:137:
+  src\lib\services\employee-service.ts:138:  // 1. Released / locked payslips are statutory history and block hard delete.
+  src\lib\services\employee-service.ts:139:  const { data: payslips, error: payslipError } = await supabase
+> src\lib\services\employee-service.ts:140:    .from('payslips')
+  src\lib\services\employee-service.ts:141:    .select('id, status')
+  src\lib\services\employee-service.ts:142:    .eq('company_id', companyId)
+  src\lib\services\employee-service.ts:143:    .eq('employee_id', employeeId)
+  src\lib\services\employee-service.ts:144:
+  src\lib\services\employee-service.ts:145:  if (payslipError) {
+  src\lib\services\employee-service.ts:146:    throw new Error(`Unable to check payslips: ${payslipError.message}`)
+  src\lib\services\employee-service.ts:147:  }
+  src\lib\services\employee-service.ts:148:
+  src\lib\services\employee-service.ts:149:  const releasedPayslipCount = (payslips || []).filter((p: any) => {
+  src\lib\services\employee-service.ts:150:    const status = String(p.status || '').toUpperCase()
+  src\lib\services\employee-service.ts:151:    return status === 'RELEASED' || status === 'PUBLISHED' || status === 'LOCKED'
+  src\lib\services\employee-service.ts:152:  }).length
+  src\lib\services\employee-service.ts:740:    assertMutation('Failed to delete salary structure components', componentError)
+  src\lib\services\employee-service.ts:741:  }
+  src\lib\services\employee-service.ts:742:
+  src\lib\services\employee-service.ts:743:  {
+  src\lib\services\employee-service.ts:744:    const { error } = await supabase
+> src\lib\services\employee-service.ts:745:      .from('payslips')
+  src\lib\services\employee-service.ts:746:      .delete()
+  src\lib\services\employee-service.ts:747:      .eq('company_id', companyId)
+  src\lib\services\employee-service.ts:748:      .eq('employee_id', employeeId)
+  src\lib\services\employee-service.ts:749:
+  src\lib\services\employee-service.ts:750:    assertMutation('Failed to delete non-released payslips', error)
+  src\lib\services\employee-service.ts:751:  }
+  src\lib\services\employee-service.ts:752:
+  src\lib\services\employee-service.ts:753:  {
+  src\lib\services\employee-service.ts:754:    const { error } = await supabase
+  src\lib\services\employee-service.ts:755:      .from('payroll_employee_records')
+  src\lib\services\employee-service.ts:756:      .delete()
+  src\lib\services\employee-service.ts:757:      .eq('employee_id', employeeId)
+  src\lib\services\employee-service.ts:786:    assertMutation('Failed to delete salary structures', error)
+  src\lib\services\employee-service.ts:787:  }
+  src\lib\services\employee-service.ts:788:
+  src\lib\services\employee-service.ts:789:  {
+  src\lib\services\employee-service.ts:790:    const { error } = await supabase
+> src\lib\services\employee-service.ts:791:      .from('salary_revisions')
+  src\lib\services\employee-service.ts:792:      .delete()
+  src\lib\services\employee-service.ts:793:      .eq('employee_id', employeeId)
+  src\lib\services\employee-service.ts:794:
+  src\lib\services\employee-service.ts:795:    assertMutation('Failed to delete salary revisions', error)
+  src\lib\services\employee-service.ts:796:  }
+  src\lib\services\employee-service.ts:797:
+  src\lib\services\employee-service.ts:798:  {
+  src\lib\services\employee-service.ts:799:    const { error } = await supabase
+  src\lib\services\employee-service.ts:800:      .from('attendance_records')
+  src\lib\services\employee-service.ts:801:      .delete()
+  src\lib\services\employee-service.ts:802:      .eq('company_id', companyId)
+  src\lib\services\employee-service.ts:803:      .eq('employee_id', employeeId)
+  src\lib\services\employee-service.ts:924:      { table: 'payroll_runs', column: 'calculated_by', label: 'payroll calculation history' },
+  src\lib\services\employee-service.ts:925:      { table: 'payroll_runs', column: 'created_by', label: 'payroll creator history' },
+  src\lib\services\employee-service.ts:926:      { table: 'payroll_runs', column: 'locked_by', label: 'payroll lock history' },
+  src\lib\services\employee-service.ts:927:      { table: 'payroll_runs', column: 'reviewed_by', label: 'payroll review history' },
+  src\lib\services\employee-service.ts:928:      { table: 'payroll_runs', column: 'unlocked_by', label: 'payroll unlock history' },
+> src\lib\services\employee-service.ts:929:      { table: 'salary_revisions', column: 'approved_by', label: 'salary revision approval history' },
+> src\lib\services\employee-service.ts:930:      { table: 'salary_revisions', column: 'requested_by', label: 'salary revision request history' },
+  src\lib\services\employee-service.ts:931:      { table: 'salary_structures', column: 'approved_by', label: 'salary structure approval history' },
+  src\lib\services\employee-service.ts:932:      { table: 'salary_structures', column: 'created_by', label: 'salary structure creator history' },
+  src\lib\services\employee-service.ts:933:      { table: 'security_events', column: 'user_id', label: 'security-event history' },
+  src\lib\services\employee-service.ts:934:      { table: 'statutory_rules', column: 'created_by', label: 'statutory-rule creator history' },
+  src\lib\services\employee-service.ts:935:      { table: 'user_roles', column: 'assigned_by', label: 'role assignment history' },
+  src\lib\services\employee-service.ts:936:    ]
+  src\lib\services\employee-service.ts:937:
+  src\lib\services\employee-service.ts:938:    for (const reference of nullableUserReferences) {
+  src\lib\services\employee-service.ts:939:      const { error } = await supabase
+  src\lib\services\employee-service.ts:940:        .from(reference.table)
+  src\lib\services\employee-service.ts:941:        .update({ [reference.column]: null })
+  src\lib\services\employee-service.ts:942:        .eq(reference.column, authUserId)
+  src\lib\types\index.ts:331:  gross_amount: number;
+  src\lib\types\index.ts:332:  deduction_amount: number;
+  src\lib\types\index.ts:333:  net_salary: number;
+  src\lib\types\index.ts:334:  amount_in_words: string;
+  src\lib\types\index.ts:335:  status: string;
+> src\lib\types\index.ts:336:  snapshot_data: Record<string, any>;
+  src\lib\types\index.ts:337:  pdf_url?: string;
+  src\lib\types\index.ts:338:  pdf_generation_status: string;
+  src\lib\types\index.ts:339:  filename?: string;
+  src\lib\types\index.ts:340:  created_at: Date;
+  src\lib\types\index.ts:341:  updated_at: Date;
+  src\lib\types\index.ts:342:}
+  src\lib\types\index.ts:343:
+  src\lib\types\index.ts:344:export interface AttendanceRecord {
+  src\lib\types\index.ts:345:  id: string;
+  src\lib\types\index.ts:346:  employee_id: string;
+  src\lib\types\index.ts:347:  date: Date;
+  src\lib\types\index.ts:348:  check_in?: Date;
+
+
+

@@ -1,3 +1,4 @@
+
 'use client'
 
 import { useState, useEffect } from 'react'
@@ -11,6 +12,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { useTheme } from 'next-themes'
 import { HaryakAiWidget } from '@/components/ai/haryak-ai-widget'
+import { ChatNotificationListener } from '@/components/chat/chat-notification-listener'
 import {
   Home, User, Clock, CalendarOff, FileText, IndianRupee,
   FolderOpen, Megaphone, Calendar, HelpCircle,
@@ -63,8 +65,10 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
     ? `${profile.first_name[0]}${profile.last_name?.[0] || ''}`.toUpperCase()
     : user?.email?.charAt(0).toUpperCase() || 'U'
 
+  const isChatRoute = pathname === '/portal/messages' || pathname.startsWith('/portal/messages/')
+
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-dvh overflow-hidden bg-background">
       {/* Mobile overlay */}
       {mobileMenuOpen && (
         <div 
@@ -180,7 +184,18 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
             <Menu className="h-5 w-5" />
           </Button>
 
-          <div className="flex flex-1 items-center justify-end space-x-4">
+          {isChatRoute && (
+            <div className="hidden min-w-0 flex-1 md:block">
+              <p className="truncate text-sm font-bold tracking-tight text-foreground">
+                Organization Chat
+              </p>
+              <p className="truncate text-[10px] text-muted-foreground">
+                Connect with team members, announcements, and internal conversations.
+              </p>
+            </div>
+          )}
+
+          <div className={cn("flex items-center justify-end space-x-4", !isChatRoute && "flex-1")}>
             <Button variant="ghost" size="icon" className="relative">
               <Bell className="h-5 w-5" />
               <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-red-600" />
@@ -203,13 +218,26 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
           </div>
         </header>
         
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
-          <div className="mx-auto max-w-5xl">
+        <main
+          className={
+            isChatRoute
+              ? 'min-h-0 flex-1 overflow-hidden p-2.5 md:p-3'
+              : 'flex-1 overflow-y-auto p-4 md:p-6 lg:p-8'
+          }
+        >
+          <div
+            className={
+              isChatRoute
+                ? 'mx-auto flex h-full min-h-0 w-full max-w-none flex-col overflow-hidden [&>*]:!m-0 [&>*]:!min-h-0 [&>*]:!w-full [&>*]:!max-w-none [&>*]:flex [&>*]:flex-1 [&>*]:flex-col [&>*]:overflow-hidden'
+                : 'mx-auto max-w-5xl'
+            }
+          >
             {children}
           </div>
         </main>
       </div>
-      <HaryakAiWidget />
+      <ChatNotificationListener />
+      {!isChatRoute && <HaryakAiWidget />}
     </div>
   )
 }

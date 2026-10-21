@@ -1,11 +1,6 @@
 'use client'
 
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from 'react'
-
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertCircle,
   CheckCircle2,
@@ -15,1366 +10,614 @@ import {
   FileText,
   Loader2,
   ShieldCheck,
+  UploadCloud,
+  XCircle,
+  AlertTriangle,
+  RefreshCw,
+  FolderOpen,
+  FileCheck,
+  BookOpen,
 } from 'lucide-react'
 
-import {
-  Badge,
-} from '@/components/ui/badge'
-
-import {
-  Button,
-} from '@/components/ui/button'
-
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/shared/empty-state'
 import {
   Card,
   CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
 } from '@/components/ui/card'
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs'
+import { toast } from 'sonner'
+import { useAuth } from '@/components/providers/auth-provider'
+
+import { DocumentUploadDialog } from '@/components/documents/document-upload-dialog'
+import { DocumentDetailsDialog } from '@/components/documents/document-details-dialog'
+import { DocumentPreviewModal } from '@/components/documents/document-preview-modal'
 
 import {
-  Dialog,
-  DialogContent,
-} from '@/components/ui/dialog'
-
-import {
-  toast,
-} from 'sonner'
-
-import {
-  useAuth,
-} from '@/components/providers/auth-provider'
-
-import {
-  OfficialLetterheadRenderer,
-  type DocumentSection,
-} from '@/components/documents/document-renderer'
-
-import {
-  downloadOfficialDocumentPdf,
-} from '@/lib/pdf/generate-document-pdf'
-
-interface MyDocument {
-  id: string
-
-  documentNumber: string
-  documentType: string
-
-  title: string
-
-  fileName: string
-  fileUrl?: string
-
-  status:
-    | 'ISSUED'
-    | 'ACKNOWLEDGED'
-
-  issueDate: string
-  effectiveDate: string
-
-  generatedAt: string
-
-  issuedAt?: string | null
-  acknowledgedAt?: string | null
-
-  letterheadVersion: number
-
-  employeeCode: string
-  employeeName: string
-
-  content?: any
-}
-
-function formatDate(
-  value?: string | null
-): string {
-  if (
-    !value
-  ) {
-    return 'Not available'
-  }
-
-  const raw =
-    String(
-      value
-    )
-
-  const date =
-    new Date(
-      raw.length >=
-        10
-        ? `${raw.slice(
-            0,
-            10
-          )}T00:00:00`
-        : raw
-    )
-
-  if (
-    Number.isNaN(
-      date.getTime()
-    )
-  ) {
-    return raw
-  }
-
-  return date.toLocaleDateString(
-    'en-IN',
-    {
-      day:
-        '2-digit',
-
-      month:
-        'short',
-
-      year:
-        'numeric',
-    }
-  )
-}
-
-function formatDocType(
-  type:
-    string
-): string {
-  return String(
-    type ||
-    ''
-  )
-    .replace(
-      /_/g,
-      ' '
-    )
-    .replace(
-      /\b\w/g,
-      letter =>
-        letter.toUpperCase()
-    )
-}
-
-function normalizeSections(
-  content:
-    any
-): DocumentSection[] {
-  if (
-    Array.isArray(
-      content?.sections
-    )
-  ) {
-    return content.sections.map(
-      (
-        section:
-          any,
-        sectionIndex:
-          number
-      ) => ({
-        id:
-          String(
-            section?.id ||
-            `section-${
-              sectionIndex +
-              1
-            }`
-          ),
-
-        title:
-          String(
-            section?.title ||
-            ''
-          ),
-
-        clauses:
-          Array.isArray(
-            section?.clauses
-          )
-            ? section.clauses.map(
-                (
-                  clause:
-                    any,
-                  clauseIndex:
-                    number
-                ) => ({
-                  id:
-                    String(
-                      clause?.id ||
-                      `section-${
-                        sectionIndex +
-                        1
-                      }-clause-${
-                        clauseIndex +
-                        1
-                      }`
-                    ),
-
-                  title:
-                    String(
-                      clause?.title ||
-                      clause?.heading ||
-                      ''
-                    ),
-
-                  content:
-                    String(
-                      clause?.content ||
-                      clause?.text ||
-                      ''
-                    ),
-                })
-              )
-            : [],
-      })
-    )
-  }
-
-  if (
-    Array.isArray(
-      content?.clauses
-    ) &&
-    content.clauses
-      .length >
-      0
-  ) {
-    return [
-      {
-        id:
-          'terms-and-conditions',
-
-        title:
-          String(
-            content?.termsTitle ||
-            'Terms & Conditions'
-          ),
-
-        clauses:
-          content.clauses.map(
-            (
-              clause:
-                any,
-              index:
-                number
-            ) => ({
-              id:
-                String(
-                  clause?.id ||
-                  `clause-${
-                    index +
-                    1
-                  }`
-                ),
-
-              title:
-                String(
-                  clause?.title ||
-                  clause?.heading ||
-                  ''
-                ),
-
-              content:
-                String(
-                  clause?.content ||
-                  clause?.text ||
-                  ''
-                ),
-            })
-          ),
-      },
-    ]
-  }
-
-  return []
-}
-
-function normalizeBodyParagraphs(
-  content:
-    any
-): string[] {
-  if (
-    Array.isArray(
-      content?.bodyParagraphs
-    )
-  ) {
-    return content.bodyParagraphs
-      .map(
-        (
-          paragraph:
-            any
-        ) =>
-          String(
-            paragraph ||
-            ''
-          ).trim()
-      )
-      .filter(
-        Boolean
-      )
-  }
-
-  if (
-    typeof content?.body ===
-    'string'
-  ) {
-    return content.body
-      .split(
-        /\n\s*\n/g
-      )
-      .map(
-        (
-          paragraph:
-            string
-        ) =>
-          paragraph.trim()
-      )
-      .filter(
-        Boolean
-      )
-  }
-
-  return []
-}
-
-function getRendererData(
-  doc:
-    MyDocument
-) {
-  const content =
-    doc.content ||
-    {}
-
-  const signatory =
-    content?.signatory ||
-    {}
-
-  return {
-    documentNumber:
-      content?.documentNumber ||
-      content?.referenceNumber ||
-      doc.documentNumber,
-
-    issueDate:
-      content?.issueDate ||
-      doc.issueDate,
-
-    effectiveDate:
-      content?.effectiveDate ||
-      doc.effectiveDate ||
-      null,
-
-    subject:
-      content?.subject ||
-      doc.title,
-
-    salutation:
-      content?.salutation ||
-      'Dear Colleague,',
-
-    bodyParagraphs:
-      normalizeBodyParagraphs(
-        content
-      ),
-
-    sections:
-      normalizeSections(
-        content
-      ),
-
-    closingText:
-      content?.closingText ||
-      content?.closing ||
-      'For Haryak Technologies India Private Limited,',
-
-    signatory: {
-      name:
-        signatory?.name ||
-        content?.signatoryName ||
-        'Authorized Signatory',
-
-      title:
-        signatory?.title ||
-        signatory?.designation ||
-        content?.signatoryTitle ||
-        'Head of Human Resources',
-
-      department:
-        signatory?.department ||
-        '',
-
-      organization:
-        signatory?.organization ||
-        'Haryak Technologies India Private Limited',
-    },
-  }
-}
+  EnterpriseDocumentItem,
+  getCategoryLabel,
+  formatFileSize,
+} from '@/lib/types/document'
 
 export default function MyDocumentsPage() {
-  const {
-    user,
-  } =
-    useAuth()
+  const { user } = useAuth()
 
-  const [
-    documents,
-    setDocuments,
-  ] =
-    useState<MyDocument[]>(
-      []
-    )
+  const [documents, setDocuments] = useState<EnterpriseDocumentItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  const [
-    loading,
-    setLoading,
-  ] =
-    useState(
-      true
-    )
+  // Dialog state
+  const [isUploadOpen, setIsUploadOpen] = useState(false)
+  const [replaceDocId, setReplaceDocId] = useState<string | undefined>(undefined)
+  const [uploadCategory, setUploadCategory] = useState('identity_proof')
 
-  const [
-    loadError,
-    setLoadError,
-  ] =
-    useState<
-      string | null
-    >(
-      null
-    )
-
-  const [
-    selectedDoc,
-    setSelectedDoc,
-  ] =
-    useState<
-      MyDocument | null
-    >(
-      null
-    )
-
-  const [
-    isPreviewOpen,
-    setIsPreviewOpen,
-  ] =
-    useState(
-      false
-    )
-
-  const [
-    acknowledging,
-    setAcknowledging,
-  ] =
-    useState(
-      false
-    )
-
-  const [
-    downloading,
-    setDownloading,
-  ] =
-    useState(
-      false
-    )
+  const [selectedDoc, setSelectedDoc] = useState<EnterpriseDocumentItem | null>(null)
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false)
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false)
+  const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null)
 
   /* ============================================================
-     LOAD EMPLOYEE DOCUMENTS
+     FETCH EMPLOYEE DOCUMENTS
      ============================================================ */
 
-  const fetchDocuments =
-    async () => {
-      setLoading(
-        true
-      )
+  const fetchDocuments = async () => {
+    setLoading(true)
+    setLoadError(null)
 
-      setLoadError(
-        null
-      )
+    try {
+      const response = await fetch('/api/documents', {
+        cache: 'no-store',
+        credentials: 'include',
+      })
 
-      try {
-        const response =
-          await fetch(
-            '/api/documents',
-            {
-              cache:
-                'no-store',
-
-              credentials:
-                'include',
-            }
-          )
-
-        const contentType =
-          response.headers.get(
-            'content-type'
-          ) ||
-          ''
-
-        if (
-          !contentType.includes(
-            'application/json'
-          )
-        ) {
-          throw new Error(
-            `Document API returned HTTP ${response.status} instead of JSON.`
-          )
-        }
-
-        const data =
-          await response.json()
-
-        if (
-          !response.ok ||
-          data.success ===
-            false
-        ) {
-          throw new Error(
-            data.error ||
-            'Failed to load documents.'
-          )
-        }
-
-        const returned =
-          Array.isArray(
-            data.documents
-          )
-            ? data.documents
-            : Array.isArray(
-                data.data
-              )
-            ? data.data
-            : []
-
-        /**
-         * Defense-in-depth:
-         * The server MUST already enforce employee identity isolation.
-         * The client additionally renders only portal-valid lifecycle
-         * states.
-         */
-        const portalDocuments =
-          returned.filter(
-            (
-              doc:
-                MyDocument
-            ) =>
-              doc.status ===
-                'ISSUED' ||
-              doc.status ===
-                'ACKNOWLEDGED'
-          )
-
-        setDocuments(
-          portalDocuments
-        )
-
-        if (
-          selectedDoc
-        ) {
-          const refreshed =
-            portalDocuments.find(
-              (
-                doc:
-                  MyDocument
-              ) =>
-                doc.id ===
-                selectedDoc.id
-            )
-
-          if (
-            refreshed
-          ) {
-            setSelectedDoc(
-              refreshed
-            )
-          }
-        }
-      } catch (
-        error:
-          any
-      ) {
-        console.error(
-          '[MyDocumentsPage] Load failed:',
-          error
-        )
-
-        const message =
-          error?.message ||
-          'Failed to load documents.'
-
-        setLoadError(
-          message
-        )
-
-        toast.error(
-          message
-        )
-      } finally {
-        setLoading(
-          false
-        )
+      const data = await response.json()
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to load your documents.')
       }
+
+      setDocuments(data.documents || [])
+    } catch (error: any) {
+      console.error('[MyDocumentsPage] Load failed:', error)
+      const message = error?.message || 'Failed to load your documents.'
+      setLoadError(message)
+      toast.error(message)
+    } finally {
+      setLoading(false)
     }
+  }
 
-  useEffect(
-    () => {
-      if (
-        user
-      ) {
-        void fetchDocuments()
-      }
-    },
-    [user]
-  )
-
-  /* ============================================================
-     PREVIEW
-     ============================================================ */
-
-  const openPreview =
-    (
-      doc:
-        MyDocument
-    ) => {
-      setSelectedDoc(
-        doc
-      )
-
-      setIsPreviewOpen(
-        true
-      )
+  useEffect(() => {
+    if (user) {
+      void fetchDocuments()
     }
+  }, [user])
 
   /* ============================================================
-     ACKNOWLEDGE
+     ACKNOWLEDGE DOCUMENT
      ============================================================ */
 
-  const handleAcknowledge =
-    async (
-      docId:
-        string
-    ) => {
-      setAcknowledging(
-        true
-      )
-
-      try {
-        const response =
-          await fetch(
-            `/api/documents/${docId}/acknowledge`,
-            {
-              method:
-                'POST',
-
-              credentials:
-                'include',
-            }
-          )
-
-        const contentType =
-          response.headers.get(
-            'content-type'
-          ) ||
-          ''
-
-        if (
-          !contentType.includes(
-            'application/json'
-          )
-        ) {
-          throw new Error(
-            `Acknowledgement API returned HTTP ${response.status} instead of JSON.`
-          )
-        }
-
-        const data =
-          await response.json()
-
-        if (
-          !response.ok ||
-          data.success ===
-            false
-        ) {
-          throw new Error(
-            data.error ||
-            'Failed to acknowledge document.'
-          )
-        }
-
-        const authoritativeDoc =
-          data.document ||
-          data.data
-
-        setSelectedDoc(
-          previous => {
-            if (
-              !previous ||
-              previous.id !==
-                docId
-            ) {
-              return previous
-            }
-
-            return {
-              ...previous,
-
-              ...(authoritativeDoc ||
-                {}),
-
-              status:
-                'ACKNOWLEDGED',
-
-              acknowledgedAt:
-                authoritativeDoc
-                  ?.acknowledgedAt ||
-                authoritativeDoc
-                  ?.acknowledged_at ||
-                data.acknowledgedAt ||
-                new Date()
-                  .toISOString(),
-            }
-          }
-        )
-
-        toast.success(
-          'Document acknowledged successfully.'
-        )
-
-        await fetchDocuments()
-      } catch (
-        error:
-          any
-      ) {
-        toast.error(
-          error?.message ||
-          'Error acknowledging document.'
-        )
-      } finally {
-        setAcknowledging(
-          false
-        )
+  const handleAcknowledge = async (docId: string) => {
+    setAcknowledgingId(docId)
+    try {
+      const response = await fetch(`/api/documents/${docId}/acknowledge`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await response.json()
+      if (!response.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to acknowledge document.')
       }
+
+      toast.success('Official document acknowledged successfully.')
+      await fetchDocuments()
+    } catch (error: any) {
+      toast.error(error?.message || 'Error acknowledging document.')
+    } finally {
+      setAcknowledgingId(null)
     }
+  }
 
-  /* ============================================================
-     DOWNLOAD PDF
-     ============================================================ */
-
-  const handleDownloadPdf =
-    async (
-      doc:
-        MyDocument
-    ) => {
-      /**
-       * The canvas only exists inside the preview modal.
-       * If user clicks download from another future entry point,
-       * ensure that document is selected first.
-       */
-      if (
-        selectedDoc?.id !==
-        doc.id ||
-        !isPreviewOpen
-      ) {
-        setSelectedDoc(
-          doc
-        )
-
-        setIsPreviewOpen(
-          true
-        )
-
-        toast.info(
-          'Preview opened. Click Download PDF again after the letter is rendered.'
-        )
-
-        return
-      }
-
-      setDownloading(
-        true
-      )
-
-      try {
-        toast.info(
-          'Generating official document PDF...'
-        )
-
-        await downloadOfficialDocumentPdf(
-          'official-document-canvas',
-          {
-            employeeCode:
-              doc.employeeCode ||
-              'EMP',
-
-            documentType:
-              doc.documentType,
-
-            documentNumber:
-              doc.documentNumber,
-
-            issueDate:
-              doc.issueDate,
-          }
-        )
-
-        toast.success(
-          'Official document PDF downloaded.'
-        )
-      } catch (
-        error:
-          any
-      ) {
-        console.error(
-          '[MyDocumentsPage] PDF failed:',
-          error
-        )
-
-        toast.error(
-          error?.message ||
-          'Could not download PDF.'
-        )
-      } finally {
-        setDownloading(
-          false
-        )
-      }
+  const handleDownload = (doc: EnterpriseDocumentItem) => {
+    if (doc.content) {
+      setSelectedDoc(doc)
+      setIsPreviewOpen(true)
+    } else if (doc.fileUrl) {
+      const link = window.document.createElement('a')
+      link.href = doc.fileUrl.includes('?') ? `${doc.fileUrl}&download=true` : `${doc.fileUrl}?download=true`
+      link.download = doc.fileName || 'document'
+      window.document.body.appendChild(link)
+      link.click()
+      window.document.body.removeChild(link)
+      toast.success('Download started.')
     }
+  }
 
-  /* ============================================================
-     COUNTERS
-     ============================================================ */
-
-  const pendingCount =
-    useMemo(
-      () =>
-        documents.filter(
-          document =>
-            document.status ===
-            'ISSUED'
-        ).length,
-      [
-        documents,
-      ]
+  // Filter into categories
+  const issuedLetters = useMemo(() => {
+    return documents.filter(
+      d =>
+        d.status === 'ISSUED' ||
+        d.status === 'ACKNOWLEDGED' ||
+        Boolean(d.content)
     )
+  }, [documents])
 
-  const acknowledgedCount =
-    useMemo(
-      () =>
-        documents.filter(
-          document =>
-            document.status ===
-            'ACKNOWLEDGED'
-        ).length,
-      [
-        documents,
-      ]
+  const myUploadedDocs = useMemo(() => {
+    return documents.filter(
+      d =>
+        !d.content &&
+        d.visibility !== 'company' &&
+        d.visibility !== 'company_wide'
     )
+  }, [documents])
 
-  const selectedRenderer =
-    useMemo(
-      () =>
-        selectedDoc
-          ? getRendererData(
-              selectedDoc
-            )
-          : null,
-      [
-        selectedDoc,
-      ]
+  const companyPolicies = useMemo(() => {
+    return documents.filter(
+      d => d.visibility === 'company' || d.visibility === 'company_wide' || d.category === 'company_policy'
     )
+  }, [documents])
+
+  const pendingReplacements = useMemo(() => {
+    return documents.filter(
+      d => d.status === 'REJECTED' || d.status === 'REPLACEMENT_REQUESTED'
+    )
+  }, [documents])
+
+  const expiringSoonDocs = useMemo(() => {
+    return documents.filter(d => d.expiryStatus === 'EXPIRING_SOON')
+  }, [documents])
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'VERIFIED':
+        return <Badge className="bg-emerald-600 text-[10px] text-white">VERIFIED</Badge>
+      case 'PENDING_VERIFICATION':
+      case 'UPLOADED':
+        return <Badge className="bg-amber-500 text-[10px] text-white">PENDING REVIEW</Badge>
+      case 'REJECTED':
+        return <Badge className="bg-red-600 text-[10px] text-white">REJECTED</Badge>
+      case 'REPLACEMENT_REQUESTED':
+        return <Badge className="bg-orange-500 text-[10px] text-white">ACTION REQUIRED</Badge>
+      case 'ISSUED':
+        return <Badge className="bg-purple-600 text-[10px] text-white">ISSUED</Badge>
+      case 'ACKNOWLEDGED':
+        return <Badge className="bg-teal-600 text-[10px] text-white">ACKNOWLEDGED</Badge>
+      default:
+        return <Badge variant="outline" className="text-[10px]">{status}</Badge>
+    }
+  }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6">
-      {/* =====================================================
-          HEADER
-          ===================================================== */}
-
-      <div className="flex flex-col items-start justify-between gap-4 border-b pb-4 sm:flex-row sm:items-center">
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            My Document Vault
-          </h1>
-
-          <p className="mt-1 text-xs text-muted-foreground">
-            Access, preview, download, and acknowledge your official employment letters issued by Haryak Technologies India Private Limited.
+          <h1 className="text-xl font-bold text-foreground">My Documents</h1>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Empowering Tomorrow’s Solutions, Today. Access your issued letters, uploaded statutory records, and company policies.
           </p>
         </div>
 
-        <Badge
-          variant="outline"
-          className="border-blue-200 bg-blue-50 px-3 py-1 text-xs text-[#1e2a78] dark:bg-blue-950 dark:text-blue-300"
+        <Button
+          size="sm"
+          className="bg-[#1e2a78] text-white hover:bg-[#152060] text-xs shadow-sm"
+          onClick={() => {
+            setReplaceDocId(undefined)
+            setUploadCategory('identity_proof')
+            setIsUploadOpen(true)
+          }}
         >
-          <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-
-          Verified Employee Stationery
-        </Badge>
+          <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+          Upload Document
+        </Button>
       </div>
 
-      {/* =====================================================
-          SUMMARY
-          ===================================================== */}
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <SummaryCard
-          label="Available Documents"
-          value={
-            documents.length
-          }
-          icon={
-            <FileText className="h-4 w-4" />
-          }
-        />
-
-        <SummaryCard
-          label="Awaiting Acknowledgement"
-          value={
-            pendingCount
-          }
-          icon={
-            <Clock className="h-4 w-4" />
-          }
-        />
-
-        <SummaryCard
-          label="Acknowledged"
-          value={
-            acknowledgedCount
-          }
-          icon={
-            <CheckCircle2 className="h-4 w-4" />
-          }
-        />
-      </div>
-
-      {/* =====================================================
-          DOCUMENTS
-          ===================================================== */}
-
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-bold text-foreground">
-            Official Corporate Letters & Certificates
-          </h2>
-
-          <span className="text-xs text-muted-foreground">
-            {documents.length}{' '}
-            Available
-          </span>
-        </div>
-
-        {loading ? (
-          <div className="flex flex-col items-center justify-center rounded-xl border bg-card py-16">
-            <Loader2 className="mb-2 h-8 w-8 animate-spin text-[#1e2a78]" />
-
-            <p className="text-xs text-muted-foreground">
-              Loading your official documents...
-            </p>
+      {/* Expiry Reminders Banner */}
+      {expiringSoonDocs.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 text-xs space-y-2">
+          <div className="flex items-center gap-2 font-bold">
+            <Clock className="h-4 w-4 text-amber-600" />
+            <span>Document Expiry Reminders ({expiringSoonDocs.length})</span>
           </div>
-        ) : loadError ? (
-          <div className="rounded-xl border border-red-200 bg-red-50/60 p-8 text-center dark:bg-red-950/20">
-            <AlertCircle className="mx-auto h-8 w-8 text-red-600" />
-
-            <h3 className="mt-3 text-sm font-semibold text-red-700 dark:text-red-300">
-              Documents could not be loaded
-            </h3>
-
-            <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
-              {loadError}
-            </p>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-4"
-              onClick={() =>
-                void fetchDocuments()
-              }
-            >
-              Retry
-            </Button>
-          </div>
-        ) : documents.length ===
-          0 ? (
-          <div className="space-y-2 rounded-xl border border-dashed bg-card p-12 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-muted text-muted-foreground">
-              <FileText className="h-6 w-6" />
-            </div>
-
-            <h3 className="text-sm font-semibold text-foreground">
-              No Official Letters Issued Yet
-            </h3>
-
-            <p className="mx-auto max-w-sm text-xs text-muted-foreground">
-              Only documents formally issued by HR appear here. Draft and approved-but-not-issued documents remain private to Administration.
-            </p>
-          </div>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {documents.map(
-              document => {
-                const isAcknowledged =
-                  document.status ===
-                  'ACKNOWLEDGED'
-
-                return (
-                  <Card
-                    key={
-                      document.id
-                    }
-                    className="flex flex-col justify-between shadow-xs transition-colors hover:border-blue-400"
-                  >
-                    <CardContent className="space-y-4 p-5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#1e2a78] dark:bg-blue-950 dark:text-blue-300">
-                          <FileText className="h-5 w-5" />
-                        </div>
-
-                        {isAcknowledged ? (
-                          <Badge
-                            variant="outline"
-                            className="border-emerald-300 bg-emerald-50 text-[10px] text-emerald-700"
-                          >
-                            <CheckCircle2 className="mr-1 h-3 w-3" />
-
-                            Acknowledged
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-amber-300 bg-amber-50 text-[10px] text-amber-700"
-                          >
-                            <Clock className="mr-1 h-3 w-3" />
-
-                            Action Required
-                          </Badge>
-                        )}
-                      </div>
-
-                      <div className="space-y-1">
-                        <p className="font-mono text-[10px] font-semibold text-muted-foreground">
-                          {
-                            document.documentNumber
-                          }
-                        </p>
-
-                        <h3
-                          className="line-clamp-2 text-sm font-semibold text-foreground"
-                          title={
-                            document.title
-                          }
-                        >
-                          {
-                            document.title
-                          }
-                        </h3>
-
-                        <p className="text-[11px] text-muted-foreground">
-                          {formatDocType(
-                            document.documentType
-                          )}
-                        </p>
-                      </div>
-
-                      <div className="space-y-1 border-t pt-3 text-[11px] text-muted-foreground">
-                        <div className="flex justify-between gap-3">
-                          <span>
-                            Issue Date
-                          </span>
-
-                          <span className="font-medium text-foreground">
-                            {formatDate(
-                              document.issueDate
-                            )}
-                          </span>
-                        </div>
-
-                        {document.issuedAt && (
-                          <div className="flex justify-between gap-3">
-                            <span>
-                              Issued
-                            </span>
-
-                            <span className="font-medium text-foreground">
-                              {formatDate(
-                                document.issuedAt
-                              )}
-                            </span>
-                          </div>
-                        )}
-
-                        {document.acknowledgedAt && (
-                          <div className="flex justify-between gap-3">
-                            <span>
-                              Acknowledged
-                            </span>
-
-                            <span className="font-medium text-emerald-700">
-                              {formatDate(
-                                document.acknowledgedAt
-                              )}
-                            </span>
-                          </div>
-                        )}
-
-                        <div className="flex justify-between gap-3">
-                          <span>
-                            Stationery
-                          </span>
-
-                          <span>
-                            v
-                            {
-                              document.letterheadVersion
-                            }
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="space-y-2 pt-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="h-8 w-full text-xs"
-                          onClick={() =>
-                            openPreview(
-                              document
-                            )
-                          }
-                        >
-                          <Eye className="mr-1.5 h-3.5 w-3.5" />
-
-                          View Official Letter
-                        </Button>
-
-                        {!isAcknowledged && (
-                          <Button
-                            size="sm"
-                            className="h-8 w-full bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-                            onClick={() =>
-                              void handleAcknowledge(
-                                document.id
-                              )
-                            }
-                            disabled={
-                              acknowledging
-                            }
-                          >
-                            {acknowledging ? (
-                              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                            )}
-
-                            Acknowledge Receipt
-                          </Button>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )
-              }
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* =====================================================
-          PREVIEW MODAL
-          ===================================================== */}
-
-      <Dialog
-        open={
-          isPreviewOpen
-        }
-        onOpenChange={
-          setIsPreviewOpen
-        }
-      >
-        <DialogContent className="flex h-[94vh] w-[96vw] max-w-[1180px] flex-col overflow-hidden p-0">
-          <div className="flex items-center justify-between gap-4 border-b bg-muted/20 px-5 py-4">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="truncate text-sm font-bold text-foreground">
-                  {selectedDoc
-                    ?.documentNumber}
-                </h3>
-
-                {selectedDoc
-                  ?.status ===
-                'ACKNOWLEDGED' ? (
-                  <Badge
-                    variant="outline"
-                    className="border-emerald-300 bg-emerald-50 text-[10px] text-emerald-700"
-                  >
-                    <CheckCircle2 className="mr-1 h-3 w-3" />
-
-                    Acknowledged
-                  </Badge>
-                ) : (
-                  <Badge
-                    variant="outline"
-                    className="border-amber-300 bg-amber-50 text-[10px] text-amber-700"
-                  >
-                    <Clock className="mr-1 h-3 w-3" />
-
-                    Acknowledgement Required
-                  </Badge>
-                )}
+          <div className="space-y-1">
+            {expiringSoonDocs.map(doc => (
+              <div key={doc.id} className="flex items-center justify-between pl-6 text-[11px]">
+                <span>
+                  <strong>{doc.title}</strong> expires on {doc.expiryDate?.slice(0, 10)} ({doc.daysUntilExpiry} days remaining).
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 text-[10px]"
+                  onClick={() => {
+                    setReplaceDocId(doc.id)
+                    setUploadCategory(doc.category)
+                    setIsUploadOpen(true)
+                  }}
+                >
+                  Renew / Upload
+                </Button>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                {selectedDoc &&
-                  formatDocType(
-                    selectedDoc.documentType
-                  )}{' '}
-                •{' '}
-                {selectedDoc
-                  ?.title}
-              </p>
-            </div>
+      {/* Action Required: Rejections or Replacement Requests */}
+      {pendingReplacements.length > 0 && (
+        <div className="rounded-xl border border-orange-300 bg-orange-50 p-4 dark:bg-orange-950/30 text-orange-900 dark:text-orange-200 text-xs space-y-2">
+          <div className="flex items-center gap-2 font-bold">
+            <AlertTriangle className="h-4 w-4 text-orange-600" />
+            <span>Action Required: Rejected or Replacement Documents ({pendingReplacements.length})</span>
+          </div>
+          <div className="space-y-2 pl-6">
+            {pendingReplacements.map(doc => (
+              <div key={doc.id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 bg-white dark:bg-slate-900 rounded-lg border">
+                <div>
+                  <span className="font-semibold text-foreground">{doc.title}</span>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    <strong>HR Reason:</strong> {doc.rejectionReason || doc.replacementReason || 'Please review and re-upload.'}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  className="bg-orange-600 text-white hover:bg-orange-700 text-xs h-7 shrink-0"
+                  onClick={() => {
+                    setReplaceDocId(doc.id)
+                    setUploadCategory(doc.category)
+                    setIsUploadOpen(true)
+                  }}
+                >
+                  <RefreshCw className="mr-1 h-3 w-3" />
+                  Upload Replacement
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 shrink-0 text-xs"
-              onClick={() =>
-                selectedDoc &&
-                void handleDownloadPdf(
-                  selectedDoc
-                )
-              }
-              disabled={
-                downloading
-              }
-            >
-              {downloading ? (
-                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+      {/* Main Tabs */}
+      <Tabs defaultValue="letters" className="space-y-4">
+        <TabsList className="border bg-muted/40 p-1">
+          <TabsTrigger value="letters" className="text-xs">
+            <FileText className="mr-1.5 h-3.5 w-3.5" />
+            Issued Letters ({issuedLetters.length})
+          </TabsTrigger>
+
+          <TabsTrigger value="uploads" className="text-xs">
+            <FileCheck className="mr-1.5 h-3.5 w-3.5" />
+            My Uploaded Records ({myUploadedDocs.length})
+          </TabsTrigger>
+
+          <TabsTrigger value="policies" className="text-xs">
+            <BookOpen className="mr-1.5 h-3.5 w-3.5" />
+            Company Policies ({companyPolicies.length})
+          </TabsTrigger>
+        </TabsList>
+
+        {/* Tab 1: Issued Letters */}
+        <TabsContent value="letters" className="space-y-4">
+          <Card>
+            <CardHeader className="border-b bg-muted/20 pb-3">
+              <CardTitle className="text-base font-bold">Official Company Letters</CardTitle>
+              <CardDescription className="text-xs">
+                Offer letters, appointment letters, salary revisions, and official service certificates issued to you.
+              </CardDescription>
+            </CardHeader>
+
+            <CardContent className="p-0">
+              {loading ? (
+                <div className="flex flex-col items-center justify-center p-12">
+                  <Loader2 className="mb-2 h-8 w-8 animate-spin text-[#1e2a78]" />
+                  <p className="text-xs text-muted-foreground">Loading your official letters...</p>
+                </div>
+              ) : issuedLetters.length === 0 ? (
+                <div className="p-8">
+                  <EmptyState
+                    icon={FolderOpen}
+                    title="No letters issued yet."
+                    description="Official letters issued by Human Resources will appear here once published."
+                  />
+                </div>
               ) : (
-                <Download className="mr-1.5 h-3.5 w-3.5" />
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                      <tr>
+                        <th className="p-3.5 pl-6">Reference No</th>
+                        <th className="p-3.5">Document Title</th>
+                        <th className="p-3.5">Issue Date</th>
+                        <th className="p-3.5">Status</th>
+                        <th className="p-3.5 pr-6 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {issuedLetters.map(doc => (
+                        <tr key={doc.id} className="hover:bg-muted/15 transition-colors">
+                          <td className="p-3.5 pl-6 font-mono font-medium">{doc.documentNumber}</td>
+                          <td className="p-3.5">
+                            <div className="font-semibold text-foreground">{doc.title}</div>
+                            <div className="text-[11px] text-muted-foreground">{getCategoryLabel(doc.category)}</div>
+                          </td>
+                          <td className="p-3.5 font-mono text-muted-foreground">{doc.issueDate?.slice(0, 10)}</td>
+                          <td className="p-3.5">{getStatusBadge(doc.status)}</td>
+                          <td className="p-3.5 pr-6 text-right space-x-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                setSelectedDoc(doc)
+                                setIsPreviewOpen(true)
+                              }}
+                            >
+                              <Eye className="mr-1 h-3 w-3" /> Preview
+                            </Button>
+
+                            {doc.status === 'ISSUED' && (
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs bg-emerald-600 text-white hover:bg-emerald-700"
+                                onClick={() => handleAcknowledge(doc.id)}
+                                disabled={acknowledgingId === doc.id}
+                              >
+                                {acknowledgingId === doc.id ? (
+                                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                ) : (
+                                  <CheckCircle2 className="mr-1 h-3 w-3" />
+                                )}
+                                Acknowledge
+                              </Button>
+                            )}
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => handleDownload(doc)}
+                            >
+                              <Download className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-              Download PDF
-            </Button>
-          </div>
+        {/* Tab 2: Uploaded Records */}
+        <TabsContent value="uploads" className="space-y-4">
+          <Card>
+            <CardHeader className="border-b bg-muted/20 pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-bold">My Uploaded Documents</CardTitle>
+                  <CardDescription className="text-xs">
+                    Statutory proofs, educational degrees, and address verification files submitted for HR review.
+                  </CardDescription>
+                </div>
+                <Button
+                  size="sm"
+                  className="bg-[#1e2a78] text-white hover:bg-[#152060] text-xs"
+                  onClick={() => {
+                    setReplaceDocId(undefined)
+                    setUploadCategory('identity_proof')
+                    setIsUploadOpen(true)
+                  }}
+                >
+                  <UploadCloud className="mr-1.5 h-3.5 w-3.5" />
+                  Upload New
+                </Button>
+              </div>
+            </CardHeader>
 
-          <div className="flex flex-1 justify-center overflow-auto bg-slate-100 p-5 dark:bg-slate-950">
-            {selectedDoc &&
-              selectedRenderer && (
-                <OfficialLetterheadRenderer
-                  documentNumber={
-                    selectedRenderer.documentNumber
-                  }
-                  issueDate={
-                    selectedRenderer.issueDate
-                  }
-                  effectiveDate={
-                    selectedRenderer.effectiveDate
-                  }
-                  subject={
-                    selectedRenderer.subject
-                  }
-                  salutation={
-                    selectedRenderer.salutation
-                  }
-                  bodyParagraphs={
-                    selectedRenderer.bodyParagraphs.length >
-                    0
-                      ? selectedRenderer.bodyParagraphs
-                      : [
-                          'This official document contains no rendered body content. Please contact Human Resources.',
-                        ]
-                  }
-                  sections={
-                    selectedRenderer.sections
-                  }
-                  closingText={
-                    selectedRenderer.closingText
-                  }
-                  signatory={
-                    selectedRenderer.signatory
-                  }
-                  headerImageUrl="/letterhead/header.png"
-                  footerImageUrl="/letterhead/footer.jpg"
-                />
+            <CardContent className="p-0">
+              {myUploadedDocs.length === 0 ? (
+                <div className="p-8">
+                  <EmptyState
+                    icon={UploadCloud}
+                    title="No documents uploaded yet."
+                    description="Upload your identity proof, address proof, or academic certificates to complete HR onboarding."
+                    action={
+                      <Button
+                        size="sm"
+                        className="bg-[#1e2a78] text-white hover:bg-[#152060] text-xs"
+                        onClick={() => setIsUploadOpen(true)}
+                      >
+                        <UploadCloud className="mr-1.5 h-3.5 w-3.5" /> Upload Document
+                      </Button>
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                      <tr>
+                        <th className="p-3.5 pl-6">Document Title</th>
+                        <th className="p-3.5">Category</th>
+                        <th className="p-3.5">Status</th>
+                        <th className="p-3.5">Uploaded Date</th>
+                        <th className="p-3.5">Version</th>
+                        <th className="p-3.5 pr-6 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {myUploadedDocs.map(doc => (
+                        <tr key={doc.id} className="hover:bg-muted/15 transition-colors">
+                          <td className="p-3.5 pl-6">
+                            <div className="font-semibold text-foreground">{doc.title}</div>
+                            <div className="text-[11px] text-muted-foreground font-mono">
+                              {doc.fileName} ({formatFileSize(doc.fileSize)})
+                            </div>
+                          </td>
+                          <td className="p-3.5">
+                            <Badge variant="outline" className="text-[10px]">
+                              {doc.categoryName || getCategoryLabel(doc.category)}
+                            </Badge>
+                          </td>
+                          <td className="p-3.5">{getStatusBadge(doc.status)}</td>
+                          <td className="p-3.5 text-muted-foreground font-mono">{doc.createdAt?.slice(0, 10)}</td>
+                          <td className="p-3.5 font-mono text-[11px]">v{doc.version || 1}</td>
+                          <td className="p-3.5 pr-6 text-right space-x-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                setSelectedDoc(doc)
+                                setIsDetailsOpen(true)
+                              }}
+                            >
+                              <Eye className="mr-1 h-3 w-3" /> Details
+                            </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => handleDownload(doc)}
+                            >
+                              <Download className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               )}
-          </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
-          <div className="flex items-center justify-between gap-4 border-t bg-card px-4 py-3">
-            <div className="text-[11px] text-muted-foreground">
-              Official stationery of Haryak Technologies India Private Limited
-              {selectedDoc?.issuedAt
-                ? ` • Issued ${formatDate(
-                    selectedDoc.issuedAt
-                  )}`
-                : ''}
-            </div>
+        {/* Tab 3: Company Policies */}
+        <TabsContent value="policies" className="space-y-4">
+          <Card>
+            <CardHeader className="border-b bg-muted/20 pb-3">
+              <CardTitle className="text-base font-bold">Company Handbooks & Policies</CardTitle>
+              <CardDescription className="text-xs">
+                Haryak Technologies India Private Limited code of conduct, information security, and employee policies.
+              </CardDescription>
+            </CardHeader>
 
-            <div className="flex items-center gap-2">
-              {selectedDoc &&
-                selectedDoc.status !==
-                  'ACKNOWLEDGED' && (
-                  <Button
-                    size="sm"
-                    className="h-8 bg-emerald-600 text-xs text-white hover:bg-emerald-700"
-                    onClick={() =>
-                      void handleAcknowledge(
-                        selectedDoc.id
-                      )
-                    }
-                    disabled={
-                      acknowledging
-                    }
-                  >
-                    {acknowledging ? (
-                      <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-                    )}
+            <CardContent className="p-0">
+              {companyPolicies.length === 0 ? (
+                <div className="p-8">
+                  <EmptyState
+                    icon={BookOpen}
+                    title="No company policies published."
+                    description="Official company-wide policies published by HR will appear here."
+                  />
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                      <tr>
+                        <th className="p-3.5 pl-6">Policy Document</th>
+                        <th className="p-3.5">Category</th>
+                        <th className="p-3.5">Effective Date</th>
+                        <th className="p-3.5 pr-6 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {companyPolicies.map(doc => (
+                        <tr key={doc.id} className="hover:bg-muted/15 transition-colors">
+                          <td className="p-3.5 pl-6">
+                            <div className="font-semibold text-foreground">{doc.title}</div>
+                            <div className="text-[11px] text-muted-foreground">{doc.description || 'Company Policy'}</div>
+                          </td>
+                          <td className="p-3.5">
+                            <Badge variant="outline" className="text-[10px]">
+                              {doc.categoryName || getCategoryLabel(doc.category)}
+                            </Badge>
+                          </td>
+                          <td className="p-3.5 font-mono text-muted-foreground">
+                            {doc.effectiveDate?.slice(0, 10) || doc.issueDate?.slice(0, 10) || 'Active'}
+                          </td>
+                          <td className="p-3.5 pr-6 text-right space-x-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => {
+                                setSelectedDoc(doc)
+                                setIsPreviewOpen(true)
+                              }}
+                            >
+                              <Eye className="mr-1 h-3 w-3" /> View Policy
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => handleDownload(doc)}
+                            >
+                              <Download className="h-3 w-3" />
+                            </Button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
-                    Acknowledge Receipt
-                  </Button>
-                )}
+      {/* Upload Dialog */}
+      <DocumentUploadDialog
+        open={isUploadOpen}
+        onOpenChange={setIsUploadOpen}
+        onSuccess={fetchDocuments}
+        isAdmin={false}
+        replacesDocumentId={replaceDocId}
+        defaultCategory={uploadCategory}
+      />
 
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 text-xs"
-                onClick={() =>
-                  setIsPreviewOpen(
-                    false
-                  )
-                }
-              >
-                Close
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* Details Dialog */}
+      <DocumentDetailsDialog
+        document={selectedDoc}
+        open={isDetailsOpen}
+        onOpenChange={setIsDetailsOpen}
+        isAdmin={false}
+        onPreview={doc => {
+          setIsDetailsOpen(false)
+          setSelectedDoc(doc)
+          setIsPreviewOpen(true)
+        }}
+        onDownload={handleDownload}
+        onRefresh={fetchDocuments}
+        onRequestReplacement={doc => {
+          setReplaceDocId(doc.id)
+          setUploadCategory(doc.category)
+          setIsUploadOpen(true)
+        }}
+      />
+
+      {/* Preview Modal */}
+      <DocumentPreviewModal
+        open={isPreviewOpen}
+        onOpenChange={setIsPreviewOpen}
+        document={selectedDoc}
+      />
     </div>
-  )
-}
-
-function SummaryCard({
-  label,
-  value,
-  icon,
-}: {
-  label:
-    string
-  value:
-    number
-  icon:
-    React.ReactNode
-}) {
-  return (
-    <Card>
-      <CardContent className="flex items-center justify-between p-4">
-        <div>
-          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
-            {label}
-          </p>
-
-          <p className="mt-1 text-xl font-bold">
-            {value}
-          </p>
-        </div>
-
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-[#1e2a78] dark:bg-blue-950 dark:text-blue-300">
-          {icon}
-        </div>
-      </CardContent>
-    </Card>
   )
 }

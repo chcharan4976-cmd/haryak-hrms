@@ -112,11 +112,11 @@ const INITIAL_FORM: FormData = {
   specialAllowance: '',
   conveyanceAllowance: '',
 
-  pfApplicable: true,
+  pfApplicable: false,
 
   ptApplicable: false,
   ptDeduction: '',
-  ptState: 'Telangana',
+  ptState: '',
 
   esiApplicable: false,
 
@@ -506,6 +506,13 @@ export default function NewEmployeePage() {
           )
           return false
         }
+
+        if (!formData.ptState.trim()) {
+          toast.error(
+            'PT State is required when Professional Tax is applicable.'
+          )
+          return false
+        }
       }
 
       const hasAnyBankValue =
@@ -841,7 +848,7 @@ export default function NewEmployeePage() {
 
           ptState:
             formData.ptApplicable
-              ? formData.ptState
+              ? formData.ptState.trim()
               : null,
 
           esiApplicable:
@@ -1565,7 +1572,7 @@ export default function NewEmployeePage() {
                   </p>
 
                   <p className="text-[11px] text-muted-foreground">
-                    Values are employee-specific and are never copied from another employee.
+                    Choose statutory applicability explicitly for this employee. No PF, PT or ESI setting is assumed automatically.
                   </p>
                 </div>
 
@@ -1600,6 +1607,10 @@ export default function NewEmployeePage() {
                     if (!value) {
                       handleChange(
                         'ptDeduction',
+                        ''
+                      )
+                      handleChange(
+                        'ptState',
                         ''
                       )
                     }
@@ -1930,10 +1941,26 @@ export default function NewEmployeePage() {
                   }
                 />
 
+                {formData.ptApplicable && (
+                  <ReviewItem
+                    label="PT State"
+                    value={formData.ptState.trim()}
+                  />
+                )}
+
                 <ReviewItem
                   label="PF"
                   value={
                     formData.pfApplicable
+                      ? 'Applicable'
+                      : 'Not Applicable'
+                  }
+                />
+
+                <ReviewItem
+                  label="ESI"
+                  value={
+                    formData.esiApplicable
                       ? 'Applicable'
                       : 'Not Applicable'
                   }

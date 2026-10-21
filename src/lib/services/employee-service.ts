@@ -92,6 +92,49 @@ export async function checkEmployeeDeleteEligibility(
 
   const blockers: string[] = []
 
+  // Non-nullable approval history must be preserved. If this employee's
+  // application user is referenced as requester/approver, hard delete is blocked.
+  const { data: employeeIdentity, error: employeeIdentityError } = await supabase
+    .from('employees')
+    .select('user_id')
+    .eq('company_id', companyId)
+    .eq('id', employeeId)
+    .maybeSingle()
+
+  if (employeeIdentityError) {
+    throw new Error(`Unable to check employee identity: ${employeeIdentityError.message}`)
+  }
+
+  if (employeeIdentity?.user_id) {
+    const { count: requestedApprovalCount, error: requestedApprovalError } = await supabase
+      .from('approval_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('requested_by', employeeIdentity.user_id)
+
+    if (requestedApprovalError) {
+      throw new Error(`Unable to check requested approvals: ${requestedApprovalError.message}`)
+    }
+
+    const { count: approverApprovalCount, error: approverApprovalError } = await supabase
+      .from('approval_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('approver_id', employeeIdentity.user_id)
+
+    if (approverApprovalError) {
+      throw new Error(`Unable to check approval history: ${approverApprovalError.message}`)
+    }
+
+    const protectedApprovalCount =
+      (requestedApprovalCount || 0) + (approverApprovalCount || 0)
+
+    if (protectedApprovalCount > 0) {
+      blockers.push(
+        `Employee is referenced by ${protectedApprovalCount} protected approval request(s). ` +
+        `Approval history uses non-nullable user references and cannot be detached safely.`
+      )
+    }
+  }
+
   // 1. Released / locked payslips are statutory history and block hard delete.
   const { data: payslips, error: payslipError } = await supabase
     .from('payslips')
@@ -588,7 +631,11 @@ export async function deleteEmployeePermanently(
     .eq('id', employeeId)
     .maybeSingle()
 
-  if (fetchErr || !emp) {
+  if (fetchErr) {
+    throw new Error(`Unable to load employee: ${fetchErr.message}`)
+  }
+
+  if (!emp) {
     throw new Error('Employee not found')
   }
 
@@ -600,17 +647,23 @@ export async function deleteEmployeePermanently(
     )
   }
 
+  if (!reason?.trim()) {
+    throw new Error('A reason is required for permanent deletion.')
+  }
+
   const eligibility = await checkEmployeeDeleteEligibility(employeeId, companyId)
 
   if (!eligibility.canDeletePermanently) {
     throw new Error(
-      `Cannot delete employee permanently: ${eligibility.blockers.join(' ')} Please deactivate the employee instead.`
+      `Cannot delete employee permanently: ${eligibility.blockers.join(
+        ' '
+      )} Please deactivate the employee instead.`
     )
   }
 
-  const authUserId = emp.user_id
+  const authUserId = emp.user_id || null
 
-  // Capture dependent IDs before removing parent rows.
+  // Capture dependent IDs before parent records are removed.
   const { data: timesheets, error: timesheetLookupError } = await supabase
     .from('timesheets')
     .select('id')
@@ -621,14 +674,20 @@ export async function deleteEmployeePermanently(
 
   const timesheetIds = (timesheets || []).map((item: any) => item.id)
 
-  const { data: salaryStructures, error: salaryStructureLookupError } = await supabase
-    .from('salary_structures')
-    .select('id')
-    .eq('employee_id', employeeId)
+  const { data: salaryStructures, error: salaryStructureLookupError } =
+    await supabase
+      .from('salary_structures')
+      .select('id')
+      .eq('employee_id', employeeId)
 
-  assertMutation('Unable to load employee salary structures', salaryStructureLookupError)
+  assertMutation(
+    'Unable to load employee salary structures',
+    salaryStructureLookupError
+  )
 
-  const salaryStructureIds = (salaryStructures || []).map((item: any) => item.id)
+  const salaryStructureIds = (salaryStructures || []).map(
+    (item: any) => item.id
+  )
 
   const { data: payrollRecords, error: payrollLookupError } = await supabase
     .from('payroll_employee_records')
@@ -639,17 +698,14 @@ export async function deleteEmployeePermanently(
 
   const payrollRecordIds = (payrollRecords || []).map((item: any) => item.id)
 
-  // ------------------------------------------------------------------
-  // 1. Remove child records first.
-  // ------------------------------------------------------------------
-
+  // Remove disposable employee-owned operational data.
   if (timesheetIds.length > 0) {
-    const { error } = await supabase
+    const { error: entryError } = await supabase
       .from('timesheet_entries')
       .delete()
       .in('timesheet_id', timesheetIds)
 
-    assertMutation('Failed to delete timesheet entries', error)
+    assertMutation('Failed to delete timesheet entries', entryError)
 
     const { error: reviewError } = await supabase
       .from('timesheet_reviews')
@@ -665,29 +721,24 @@ export async function deleteEmployeePermanently(
       .delete()
       .in('payroll_employee_record_id', payrollRecordIds)
 
-    assertMutation('Failed to delete non-finalized payroll earnings', earningsError)
+    assertMutation('Failed to delete payroll earnings', earningsError)
 
     const { error: deductionsError } = await supabase
       .from('payroll_deductions')
       .delete()
       .in('payroll_employee_record_id', payrollRecordIds)
 
-    assertMutation('Failed to delete non-finalized payroll deductions', deductionsError)
+    assertMutation('Failed to delete payroll deductions', deductionsError)
   }
 
   if (salaryStructureIds.length > 0) {
-    const { error } = await supabase
+    const { error: componentError } = await supabase
       .from('salary_structure_components')
       .delete()
       .in('salary_structure_id', salaryStructureIds)
 
-    assertMutation('Failed to delete salary structure components', error)
+    assertMutation('Failed to delete salary structure components', componentError)
   }
-
-  // ------------------------------------------------------------------
-  // 2. Remove employee-owned operational/master records.
-  // Protected finalized history was already blocked by eligibility.
-  // ------------------------------------------------------------------
 
   {
     const { error } = await supabase
@@ -764,6 +815,7 @@ export async function deleteEmployeePermanently(
     assertMutation('Failed to delete leave requests', error)
   }
 
+  // leave_balances has no company_id in the current schema.
   {
     const { error } = await supabase
       .from('leave_balances')
@@ -802,8 +854,7 @@ export async function deleteEmployeePermanently(
     assertMutation('Failed to delete HR requests', error)
   }
 
-  // If this employee was a reporting manager, preserve subordinate rows by
-  // clearing the relationship rather than deleting those employees.
+  // Preserve subordinate employee rows; only remove this manager relationship.
   {
     const { error } = await supabase
       .from('employees')
@@ -818,30 +869,95 @@ export async function deleteEmployeePermanently(
   }
 
   if (authUserId) {
+    // Re-check the two confirmed NOT NULL + NO ACTION approval references
+    // immediately before identity deletion.
+    const { count: requestedApprovalCount, error: requestedApprovalError } =
+      await supabase
+        .from('approval_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('requested_by', authUserId)
+
+    assertMutation(
+      'Failed to verify requested approval references',
+      requestedApprovalError
+    )
+
+    const { count: approverApprovalCount, error: approverApprovalError } =
+      await supabase
+        .from('approval_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('approver_id', authUserId)
+
+    assertMutation(
+      'Failed to verify approver references',
+      approverApprovalError
+    )
+
+    if ((requestedApprovalCount || 0) > 0 || (approverApprovalCount || 0) > 0) {
+      throw new Error(
+        'Permanent deletion stopped because protected approval-request history references this user.'
+      )
+    }
+
+    // notifications.user_id is NOT NULL + NO ACTION and notifications are
+    // employee-specific disposable records.
     const { error: notificationError } = await supabase
       .from('notifications')
       .delete()
-      .eq('company_id', companyId)
       .eq('user_id', authUserId)
 
     assertMutation('Failed to delete employee notifications', notificationError)
-  }
 
-  // ------------------------------------------------------------------
-  // 3. Remove app identity and employee master.
-  // ------------------------------------------------------------------
+    // Detach all confirmed nullable NO ACTION references to public.users.
+    const nullableUserReferences: Array<{
+      table: string
+      column: string
+      label: string
+    }> = [
+      { table: 'attendance_records', column: 'approved_by', label: 'attendance approvals' },
+      { table: 'audit_logs', column: 'user_id', label: 'audit history' },
+      { table: 'documents', column: 'uploaded_by', label: 'document uploader history' },
+      { table: 'employees', column: 'created_by', label: 'employee creator history' },
+      { table: 'hr_requests', column: 'assigned_to', label: 'HR request assignments' },
+      { table: 'leave_requests', column: 'approved_by', label: 'leave approval history' },
+      { table: 'payroll_runs', column: 'approved_by', label: 'payroll approval history' },
+      { table: 'payroll_runs', column: 'calculated_by', label: 'payroll calculation history' },
+      { table: 'payroll_runs', column: 'created_by', label: 'payroll creator history' },
+      { table: 'payroll_runs', column: 'locked_by', label: 'payroll lock history' },
+      { table: 'payroll_runs', column: 'reviewed_by', label: 'payroll review history' },
+      { table: 'payroll_runs', column: 'unlocked_by', label: 'payroll unlock history' },
+      { table: 'salary_revisions', column: 'approved_by', label: 'salary revision approval history' },
+      { table: 'salary_revisions', column: 'requested_by', label: 'salary revision request history' },
+      { table: 'salary_structures', column: 'approved_by', label: 'salary structure approval history' },
+      { table: 'salary_structures', column: 'created_by', label: 'salary structure creator history' },
+      { table: 'security_events', column: 'user_id', label: 'security-event history' },
+      { table: 'statutory_rules', column: 'created_by', label: 'statutory-rule creator history' },
+      { table: 'user_roles', column: 'assigned_by', label: 'role assignment history' },
+    ]
 
-  {
-    const { error } = await supabase
+    for (const reference of nullableUserReferences) {
+      const { error } = await supabase
+        .from(reference.table)
+        .update({ [reference.column]: null })
+        .eq(reference.column, authUserId)
+
+      assertMutation(`Failed to preserve ${reference.label}`, error)
+    }
+
+    // Detach the employee from the application user before deleting Auth.
+    const { error: employeeDetachError } = await supabase
       .from('employees')
-      .update({ user_id: null })
+      .update({
+        user_id: null,
+        updated_at: new Date().toISOString(),
+      })
       .eq('company_id', companyId)
       .eq('id', employeeId)
 
-    assertMutation('Failed to detach employee login identity', error)
-  }
+    assertMutation('Failed to detach employee login identity', employeeDetachError)
 
-  if (authUserId) {
+    // user_roles.user_id is CASCADE, but delete explicitly so the cleanup is
+    // deterministic even before public.users is removed.
     const { error: roleError } = await supabase
       .from('user_roles')
       .delete()
@@ -849,13 +965,68 @@ export async function deleteEmployeePermanently(
 
     assertMutation('Failed to delete employee role assignments', roleError)
 
-    // Audit history must survive employee deletion.
-    const { error: auditDetachError } = await supabase
-      .from('audit_logs')
-      .update({ user_id: null })
-      .eq('user_id', authUserId)
+    // Verify Auth identity and delete it. The FK inspection showed no
+    // public.users -> auth.users FK in the returned constraint set, so this
+    // can occur before deleting public.users. If Auth deletion fails, stop
+    // before removing the public application identity or employee master.
+    const { data: authLookup, error: authLookupError } =
+      await supabase.auth.admin.getUserById(authUserId)
 
-    assertMutation('Failed to preserve audit history', auditDetachError)
+    const authLookupMessage = String(authLookupError?.message || '').toLowerCase()
+    const authAlreadyMissing =
+      Boolean(authLookupError) &&
+      (authLookupMessage.includes('not found') ||
+        authLookupMessage.includes('user not found') ||
+        authLookupMessage.includes('no user'))
+
+    if (authLookupError && !authAlreadyMissing) {
+      throw new Error(
+        `Unable to verify employee authentication account: ${authLookupError.message}`
+      )
+    }
+
+    if (authLookup?.user) {
+      try {
+        await supabase.auth.admin.signOut(authUserId, 'global')
+      } catch (signOutError) {
+        console.warn(
+          '[deleteEmployeePermanently] Unable to revoke sessions before Auth deletion:',
+          signOutError
+        )
+      }
+
+      const { error: authDeleteError } =
+        await supabase.auth.admin.deleteUser(authUserId)
+
+      if (authDeleteError) {
+        throw new Error(
+          `Failed to delete employee authentication account: ${authDeleteError.message}`
+        )
+      }
+    }
+
+    // Verify the Auth identity is gone before deleting public.users.
+    const { data: authVerify, error: authVerifyError } =
+      await supabase.auth.admin.getUserById(authUserId)
+
+    const authVerifyMessage = String(authVerifyError?.message || '').toLowerCase()
+    const authVerifiedMissing =
+      Boolean(authVerifyError) &&
+      (authVerifyMessage.includes('not found') ||
+        authVerifyMessage.includes('user not found') ||
+        authVerifyMessage.includes('no user'))
+
+    if (authVerify?.user && !authVerifyError) {
+      throw new Error(
+        'Authentication account still exists after permanent deletion attempt.'
+      )
+    }
+
+    if (authVerifyError && !authVerifiedMissing) {
+      throw new Error(
+        `Unable to verify authentication deletion: ${authVerifyError.message}`
+      )
+    }
 
     const { error: userDeleteError } = await supabase
       .from('users')
@@ -873,30 +1044,40 @@ export async function deleteEmployeePermanently(
 
   assertMutation('Failed to delete employee master record', employeeDeleteError)
 
-  if (authUserId) {
-    try {
-      const { error: authDeleteError } =
-        await supabase.auth.admin.deleteUser(authUserId)
+  // Verify the employee/application identity rows are actually gone.
+  const { data: employeeStillExists, error: employeeVerifyError } = await supabase
+    .from('employees')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('id', employeeId)
+    .maybeSingle()
 
-      if (authDeleteError) {
-        console.error(
-          '[deleteEmployeePermanently] Supabase Auth delete failed after DB cleanup:',
-          authDeleteError.message
-        )
-      }
-    } catch (authErr: any) {
-      console.error(
-        '[deleteEmployeePermanently] Supabase Auth delete failed after DB cleanup:',
-        authErr?.message || authErr
+  assertMutation('Unable to verify employee deletion', employeeVerifyError)
+
+  if (employeeStillExists) {
+    throw new Error(
+      'Employee master record still exists after permanent deletion.'
+    )
+  }
+
+  if (authUserId) {
+    const { data: userStillExists, error: userVerifyError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', authUserId)
+      .maybeSingle()
+
+    assertMutation('Unable to verify application-user deletion', userVerifyError)
+
+    if (userStillExists) {
+      throw new Error(
+        'Application user still exists after permanent deletion.'
       )
     }
   }
 
-  // IMPORTANT:
-  // We intentionally do NOT decrement companies.employee_id_counter.
-  // New employee allocation now scans employees and reuses the LOWEST
-  // truly missing code. Because this employee row no longer exists,
-  // its HRK-xxx code becomes available again automatically.
+  // Do not decrement companies.employee_id_counter. Employee creation scans
+  // existing employee codes and can reuse the lowest genuinely missing HRK-xxx.
 
   await createAuditLog({
     companyId,
@@ -909,13 +1090,18 @@ export async function deleteEmployeePermanently(
     entityName: `${emp.full_name} (${emp.employee_code})`,
     description:
       `Permanently deleted employee ${emp.full_name} (${emp.employee_code}). ` +
-      `The employee code is now available for future allocation. Reason: ${reason}`,
+      `Application identity and authentication account were removed. ` +
+      `The employee code is now available for future allocation. ` +
+      `Reason: ${reason.trim()}`,
     reason: 'EMPLOYEE_PERMANENTLY_DELETED',
   })
 
   return {
     success: true,
     employeeCode: emp.employee_code,
+    deletedEmail: emp.official_email,
     employeeCodeReleased: true,
+    applicationUserDeleted: Boolean(authUserId),
+    authenticationUserDeleted: Boolean(authUserId),
   }
 }

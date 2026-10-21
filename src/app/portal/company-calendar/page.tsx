@@ -399,20 +399,20 @@ export default function CompanyCalendarPage() {
     )
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
+    <div className="w-full space-y-6 pb-6">
       {/* =====================================================
           HEADER
           ===================================================== */}
 
-      <div className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-center lg:justify-between">
+      <div className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-[#1e2a78] dark:bg-blue-950/40 dark:text-blue-300">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#1e2a78] dark:bg-blue-950/40 dark:text-blue-300">
               <CalendarIcon className="h-5 w-5" />
             </div>
 
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
+              <h1 className="text-2xl font-bold tracking-tight text-foreground">
                 Company Calendar
               </h1>
 
@@ -437,14 +437,14 @@ export default function CompanyCalendarPage() {
           YEAR + SUMMARY
           ===================================================== */}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_1fr_1.4fr]">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Card>
-          <CardContent className="p-5">
+          <CardContent className="p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Calendar Year
             </p>
 
-            <div className="mt-3 flex items-center justify-between">
+            <div className="mt-2 flex items-center justify-between">
               <Button
                 variant="outline"
                 size="icon"
@@ -459,7 +459,7 @@ export default function CompanyCalendarPage() {
                 <ChevronLeft className="h-4 w-4" />
               </Button>
 
-              <span className="text-2xl font-bold">
+              <span className="text-xl font-bold">
                 {year}
               </span>
 
@@ -481,12 +481,12 @@ export default function CompanyCalendarPage() {
         </Card>
 
         <Card>
-          <CardContent className="p-5">
+          <CardContent className="p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Total Holidays
             </p>
 
-            <p className="mt-2 text-3xl font-bold">
+            <p className="mt-1.5 text-2xl font-bold">
               {
                 holidays.length
               }
@@ -499,13 +499,29 @@ export default function CompanyCalendarPage() {
         </Card>
 
         <Card>
-          <CardContent className="p-5">
+          <CardContent className="p-4">
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Upcoming Holidays
+            </p>
+
+            <p className="mt-1.5 text-2xl font-bold">
+              {upcoming.length}
+            </p>
+
+            <p className="mt-1 text-xs text-muted-foreground">
+              Remaining in {year}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent className="p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
               Next Holiday
             </p>
 
             {nextHoliday ? (
-              <div className="mt-2">
+              <div className="mt-1.5">
                 <p className="font-semibold">
                   {
                     nextHoliday.name
@@ -541,7 +557,7 @@ export default function CompanyCalendarPage() {
                 </p>
               </div>
             ) : (
-              <p className="mt-3 text-sm text-muted-foreground">
+              <p className="mt-2 text-sm text-muted-foreground">
                 No upcoming holiday in this year.
               </p>
             )}
@@ -594,7 +610,7 @@ export default function CompanyCalendarPage() {
               No upcoming holidays scheduled for {year}.
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
               {upcoming
                 .slice(
                   0,
@@ -606,7 +622,7 @@ export default function CompanyCalendarPage() {
                       key={
                         holiday.id
                       }
-                      className="rounded-xl border bg-card p-4"
+                      className="rounded-lg border bg-card p-3.5"
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>

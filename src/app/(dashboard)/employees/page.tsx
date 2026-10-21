@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   Search, Plus, Grid3X3, List, MoreHorizontal, Eye,
-  Filter, Users, Loader2, Mail, Phone, Building2,
-  Edit, KeyRound, Wrench, IndianRupee, Clock, UserX, Trash2
+  Users, Loader2, Mail, Building2,
+  Edit, KeyRound, Wrench, IndianRupee, Clock, UserX
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -64,7 +64,10 @@ export default function EmployeesPage() {
   const fetchEmployees = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/employees')
+      const res = await fetch('/api/employees?status=all', {
+        cache: 'no-store',
+        credentials: 'include',
+      })
       const data = await res.json()
       if (data.success && Array.isArray(data.employees)) {
         setEmployees(data.employees)
@@ -126,8 +129,9 @@ export default function EmployeesPage() {
     const st = status.toLowerCase()
     if (st === 'active') return <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-200">Active</Badge>
     if (st === 'probation') return <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-200">Probation</Badge>
-    if (st === 'notice') return <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300 border-orange-200">Notice</Badge>
-    if (st === 'terminated' || st === 'inactive') return <Badge variant="destructive">Terminated</Badge>
+    if (st === 'notice') return <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300border-orange-200">Notice</Badge>
+    if (st === 'inactive') return <Badge variant="secondary">Inactive</Badge>
+    if (st === 'terminated') return <Badge variant="destructive">Terminated</Badge>
     return <Badge variant="secondary">{status}</Badge>
   }
 
@@ -168,6 +172,7 @@ export default function EmployeesPage() {
                 <option value="active">Active</option>
                 <option value="probation">Probation</option>
                 <option value="notice">Notice</option>
+                <option value="inactive">Inactive</option>
                 <option value="terminated">Terminated</option>
               </select>
 

@@ -1,0 +1,2450 @@
+﻿================ PARENT ROUTE ================
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server'
+
+import {
+  createAdminClient,
+} from '@/lib/supabase/admin'
+
+import {
+  resolveRequestContext,
+  resolveEmployeeAccess,
+  hasRole,
+} from '@/lib/services/company-resolver'
+
+import {
+  getEffectiveCompensation,
+} from '@/lib/services/compensation-service'
+
+import {
+  Decimal,
+} from '@/lib/utils/decimal'
+
+/* =========================================================
+   GET
+   ========================================================= */
+
+export async function GET(
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      employeeId: string
+    }>
+  }
+) {
+  const resolved =
+    await resolveRequestContext()
+
+  if (!resolved.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          resolved.error.message,
+      },
+      {
+        status:
+          resolved.error.status,
+      }
+    )
+  }
+
+  const {
+    context,
+  } = resolved
+
+  const {
+    employeeId,
+  } = await params
+
+  const access =
+    resolveEmployeeAccess(
+      context,
+      employeeId
+    )
+
+  if (
+    access.denied ||
+    (
+      access.employeeId &&
+      access.employeeId !==
+        employeeId
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Forbidden',
+      },
+      {
+        status: 403,
+      }
+    )
+  }
+
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Database unavailable.',
+      },
+      {
+        status: 503,
+      }
+    )
+  }
+
+  const {
+    data: structures,
+    error:
+      structureError,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .select(`
+      *,
+      salary_structure_components (
+        *,
+        component:component_id (*)
+      )
+    `)
+    .eq(
+      'company_id',
+      context.companyId
+    )
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .order(
+      'effective_from',
+      {
+        ascending: false,
+      }
+    )
+
+  if (structureError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          structureError.message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  const {
+    data:
+      statutoryDetails,
+  } = await supabase
+    .from(
+      'employee_statutory_details'
+    )
+    .select(`
+      pf_applicable,
+      uan_number,
+      pf_number,
+      pf_joining_date,
+      esi_applicable,
+      esi_number,
+      pt_applicable,
+      pt_state,
+      pt_amount,
+      tax_regime,
+      pan_masked
+    `)
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .maybeSingle()
+
+  const effective =
+    await getEffectiveCompensation(
+      employeeId,
+      context.companyId
+    )
+
+  let compensation:
+    any = null
+
+  if (
+    effective.structureId
+  ) {
+    const findComponent = (
+      ...codes: string[]
+    ) =>
+      effective.components.find(
+        (component) =>
+          codes.includes(
+            component.code.toUpperCase()
+          )
+      )
+
+    const basic =
+      findComponent(
+        'BASIC'
+      )
+
+    const hra =
+      findComponent(
+        'HRA'
+      )
+
+    const special =
+      findComponent(
+        'SPECIAL_ALLOWANCE',
+        'SPECIAL'
+      )
+
+    const conveyance =
+      findComponent(
+        'CONVEYANCE'
+      )
+
+    compensation = {
+      id:
+        effective.structureId,
+
+      ctc:
+        effective.annualCtc,
+
+      annual_ctc:
+        effective.annualCtc,
+
+      monthly_gross:
+        effective.monthlyGross,
+
+      basic_salary:
+        basic
+          ? basic.monthlyAmount
+          : null,
+
+      hra:
+        hra
+          ? hra.monthlyAmount
+          : null,
+
+      special_allowance:
+        special
+          ? special.monthlyAmount
+          : null,
+
+      conveyance_allowance:
+        conveyance
+          ? conveyance.monthlyAmount
+          : null,
+
+      /**
+       * PT comes from employee_statutory_details,
+       * not from an invented salary component.
+       */
+      pt_deduction:
+        statutoryDetails?.pt_amount ??
+        null,
+
+      pt_applicable:
+        statutoryDetails?.pt_applicable ??
+        null,
+
+      pt_state:
+        statutoryDetails?.pt_state ??
+        null,
+
+      pf_applicable:
+        statutoryDetails?.pf_applicable ??
+        null,
+
+      esi_applicable:
+        statutoryDetails?.esi_applicable ??
+        null,
+
+      pan_masked:
+        statutoryDetails?.pan_masked ??
+        null,
+
+      effective_from:
+        effective.effectiveFrom,
+
+      status:
+        effective.status,
+
+      isComplete:
+        effective.isComplete,
+
+      incompletenessReasons:
+        effective.incompletenessReasons,
+
+      grossEarningsFromComponents:
+        effective.grossEarningsFromComponents,
+
+      totalDeductionsFromComponents:
+        effective.totalDeductionsFromComponents,
+
+      components:
+        effective.components.map(
+          (component: any) => ({
+            id:
+              component.id,
+
+            componentId:
+              component.componentId,
+
+            name:
+              component.name,
+
+            code:
+              component.code,
+
+            type:
+              component.type,
+
+            category:
+              component.category,
+
+            monthly:
+              component.monthlyAmount,
+
+            monthly_amount:
+              component.monthlyAmount,
+
+            annual:
+              component.annualAmount,
+
+            annual_amount:
+              component.annualAmount,
+
+            isTaxable:
+              component.isTaxable,
+
+            isStatutory:
+              component.isStatutory,
+
+            isActive:
+              component.isActive,
+          })
+        ),
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+
+    compensation,
+
+    statutoryDetails:
+      statutoryDetails || null,
+
+    effective,
+
+    history:
+      structures || [],
+
+    data:
+      structures || [],
+  })
+}
+
+/* =========================================================
+   CREATE NEW COMPENSATION VERSION
+   ========================================================= */
+
+export async function POST(
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      employeeId: string
+    }>
+  }
+) {
+  const resolved =
+    await resolveRequestContext()
+
+  if (!resolved.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          resolved.error.message,
+      },
+      {
+        status:
+          resolved.error.status,
+      }
+    )
+  }
+
+  const {
+    context,
+  } = resolved
+
+  if (
+    !hasRole(
+      context,
+      'SUPER_ADMIN',
+      'HR_ADMIN',
+      'PAYROLL_ADMIN'
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Insufficient permissions to modify compensation.',
+      },
+      {
+        status: 403,
+      }
+    )
+  }
+
+  const {
+    employeeId,
+  } = await params
+
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Database unavailable.',
+      },
+      {
+        status: 503,
+      }
+    )
+  }
+
+  const body =
+    await request.json()
+
+  const {
+    annual_ctc,
+    monthly_gross,
+    effective_from,
+    components,
+    reason,
+
+    pt_amount,
+    pt_applicable,
+    pt_state,
+
+    allow_incomplete =
+      false,
+  } = body
+
+  const ctc =
+    Number(
+      annual_ctc || 0
+    )
+
+  const gross =
+    Number(
+      monthly_gross || 0
+    )
+
+  if (
+    !Number.isFinite(ctc) ||
+    ctc <= 0
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Annual CTC must be greater than zero.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  if (
+    !Number.isFinite(gross) ||
+    gross <= 0
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Monthly Gross must be greater than zero.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  if (gross > ctc) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Monthly Gross cannot exceed Annual CTC.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  const requestedComponents =
+    Array.isArray(components)
+      ? components
+      : []
+
+  if (
+    requestedComponents.length ===
+      0 &&
+    !allow_incomplete
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Salary components are required before activating this compensation structure.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     RESOLVE COMPONENT DEFINITIONS FIRST
+     ----------------------------------------------------- */
+
+  const resolvedComponents:
+    Array<{
+      componentId: string
+      code: string
+      name: string
+      type: string
+      monthlyAmount: number
+      annualAmount: number
+      calculationType: string
+    }> = []
+
+  for (
+    const component of requestedComponents
+  ) {
+    let code =
+      String(
+        component.code ||
+          component.component_code ||
+          ''
+      )
+        .trim()
+        .toUpperCase()
+
+    if (
+      code === 'SPECIAL'
+    ) {
+      code =
+        'SPECIAL_ALLOWANCE'
+    }
+
+    if (!code) {
+      continue
+    }
+
+    const monthlyAmount =
+      Number(
+        component.monthly_amount ??
+          component.monthly ??
+          0
+      )
+
+    if (
+      !Number.isFinite(
+        monthlyAmount
+      ) ||
+      monthlyAmount < 0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Invalid monthly amount for ${code}.`,
+        },
+        {
+          status: 400,
+        }
+      )
+    }
+
+    const {
+      data:
+        definition,
+      error:
+        definitionError,
+    } = await supabase
+      .from(
+        'salary_components'
+      )
+      .select(
+        'id, code, name, type'
+      )
+      .eq(
+        'company_id',
+        context.companyId
+      )
+      .eq(
+        'code',
+        code
+      )
+      .eq(
+        'is_active',
+        true
+      )
+      .maybeSingle()
+
+    if (
+      definitionError
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            definitionError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+
+    if (!definition) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Salary component "${code}" is not configured for this company.`,
+        },
+        {
+          status: 400,
+        }
+      )
+    }
+
+    resolvedComponents.push({
+      componentId:
+        definition.id,
+
+      code:
+        definition.code,
+
+      name:
+        definition.name,
+
+      type:
+        definition.type,
+
+      monthlyAmount,
+
+      annualAmount:
+        Number(
+          component.annual_amount ??
+            component.annual ??
+            monthlyAmount * 12
+        ),
+
+      calculationType:
+        component.calculation_type ||
+        'FLAT',
+    })
+  }
+
+  /* -----------------------------------------------------
+     GROSS RECONCILIATION
+     ----------------------------------------------------- */
+
+  const earningComponents =
+    resolvedComponents.filter(
+      (component) =>
+        component.type ===
+        'earning'
+    )
+
+  const earningsTotal =
+    earningComponents.reduce(
+      (
+        total,
+        component
+      ) =>
+        Decimal.from(total)
+          .add(
+            component.monthlyAmount
+          )
+          .toNumber(),
+      0
+    )
+
+  if (
+    earningComponents.length >
+      0 &&
+    Math.abs(
+      earningsTotal -
+        gross
+    ) > 0.01
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+
+        error:
+          `Component total Ã¢â€šÂ¹${earningsTotal.toLocaleString(
+            'en-IN'
+          )} does not match Monthly Gross Ã¢â€šÂ¹${gross.toLocaleString(
+            'en-IN'
+          )}.`,
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     PT VALIDATION
+     ----------------------------------------------------- */
+
+  const ptAmount =
+    pt_amount !== undefined &&
+    pt_amount !== null &&
+    pt_amount !== ''
+      ? Number(pt_amount)
+      : null
+
+  if (
+    ptAmount !== null &&
+    (
+      !Number.isFinite(
+        ptAmount
+      ) ||
+      ptAmount < 0
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Professional Tax must be zero or positive.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  const ptApplicable =
+    typeof pt_applicable === 'boolean'
+      ? pt_applicable
+      : ptAmount !== null && ptAmount > 0
+
+  const normalizedPtState =
+    typeof pt_state === 'string'
+      ? pt_state.trim()
+      : ''
+
+  if (ptApplicable && ptAmount === null) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Professional Tax amount is required when Professional Tax is applicable.',
+      },
+      { status: 400 }
+    )
+  }
+
+  if (ptApplicable && !normalizedPtState) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'PT State is required when Professional Tax is applicable.',
+      },
+      { status: 400 }
+    )
+  }
+
+  /* -----------------------------------------------------
+     EXISTING ACTIVE STRUCTURE
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      activeStructure,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .select(
+      'id, annual_ctc, effective_from'
+    )
+    .eq(
+      'company_id',
+      context.companyId
+    )
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .eq(
+      'status',
+      'active'
+    )
+    .maybeSingle()
+
+  const effectiveDate =
+    effective_from ||
+    new Date()
+      .toISOString()
+      .split('T')[0]
+
+  /* -----------------------------------------------------
+     CREATE REVISION RECORD
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      revision,
+    error:
+      revisionError,
+  } = await supabase
+    .from(
+      'salary_revisions'
+    )
+    .insert({
+      company_id:
+        context.companyId,
+
+      employee_id:
+        employeeId,
+
+      old_salary_structure_id:
+        activeStructure?.id ||
+        null,
+
+      old_ctc:
+        activeStructure?.annual_ctc ||
+        0,
+
+      new_ctc:
+        ctc,
+
+      increment_amount:
+        ctc -
+        (
+          activeStructure?.annual_ctc ||
+          0
+        ),
+
+      increment_percentage:
+        activeStructure?.annual_ctc
+          ? (
+              (
+                ctc -
+                activeStructure.annual_ctc
+              ) /
+              activeStructure.annual_ctc
+            ) *
+            100
+          : 0,
+
+      effective_date:
+        effectiveDate,
+
+      reason:
+        reason ||
+        'Compensation structure revision',
+
+      status:
+        'activated',
+
+      requested_by:
+        context.authUserId,
+
+      approved_by:
+        context.authUserId,
+
+      approved_at:
+        new Date().toISOString(),
+    })
+    .select('id')
+    .single()
+
+  if (
+    revisionError ||
+    !revision
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          revisionError?.message ||
+          'Unable to create compensation revision.',
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     CREATE NEW STRUCTURE
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      newStructure,
+    error:
+      structureError,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .insert({
+      company_id:
+        context.companyId,
+
+      employee_id:
+        employeeId,
+
+      annual_ctc:
+        ctc,
+
+      monthly_gross:
+        gross,
+
+      effective_from:
+        effectiveDate,
+
+      status:
+        'active',
+
+      revision_id:
+        revision.id,
+
+      notes:
+        resolvedComponents.length ===
+        0
+          ? 'Salary structure incomplete.'
+          : null,
+
+      created_by:
+        context.authUserId,
+    })
+    .select('id')
+    .single()
+
+  if (
+    structureError ||
+    !newStructure
+  ) {
+    await supabase
+      .from(
+        'salary_revisions'
+      )
+      .delete()
+      .eq(
+        'id',
+        revision.id
+      )
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          structureError?.message ||
+          'Unable to create salary structure.',
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     COMPONENTS
+     ----------------------------------------------------- */
+
+  if (
+    resolvedComponents.length >
+    0
+  ) {
+    const rows =
+      resolvedComponents.map(
+        (component) => ({
+          salary_structure_id:
+            newStructure.id,
+
+          component_id:
+            component.componentId,
+
+          monthly_amount:
+            component.monthlyAmount,
+
+          annual_amount:
+            component.annualAmount,
+
+          calculation_type:
+            component.calculationType,
+
+          is_active:
+            true,
+        })
+      )
+
+    const {
+      error:
+        componentError,
+    } = await supabase
+      .from(
+        'salary_structure_components'
+      )
+      .insert(rows)
+
+    if (componentError) {
+      await supabase
+        .from(
+          'salary_structures'
+        )
+        .delete()
+        .eq(
+          'id',
+          newStructure.id
+        )
+
+      await supabase
+        .from(
+          'salary_revisions'
+        )
+        .delete()
+        .eq(
+          'id',
+          revision.id
+        )
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            componentError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  /* -----------------------------------------------------
+     UPDATE PT CONFIGURATION
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      existingStatutory,
+  } = await supabase
+    .from(
+      'employee_statutory_details'
+    )
+    .select('id')
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .maybeSingle()
+
+  if (
+    existingStatutory
+  ) {
+    const {
+      error:
+        statutoryError,
+    } = await supabase
+      .from(
+        'employee_statutory_details'
+      )
+      .update({
+        pt_applicable:
+          ptApplicable,
+
+        pt_amount:
+          ptAmount,
+
+        pt_state:
+          ptApplicable
+            ? normalizedPtState
+            : null,
+      })
+      .eq(
+        'id',
+        existingStatutory.id
+      )
+
+    if (statutoryError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            statutoryError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  } else {
+    const {
+      error:
+        statutoryError,
+    } = await supabase
+      .from(
+        'employee_statutory_details'
+      )
+      .insert({
+        employee_id:
+          employeeId,
+
+        pt_applicable:
+          ptApplicable,
+
+        pt_amount:
+          ptAmount,
+
+        pt_state:
+          ptApplicable
+            ? normalizedPtState
+            : null,
+      })
+
+    if (statutoryError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            statutoryError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  /* -----------------------------------------------------
+     SUPERSEDE PREVIOUS STRUCTURE ONLY AFTER SUCCESS
+     ----------------------------------------------------- */
+
+  if (activeStructure) {
+    const previousEnd =
+      new Date(
+        new Date(
+          effectiveDate
+        ).getTime() -
+          86_400_000
+      )
+        .toISOString()
+        .split('T')[0]
+
+    const {
+      error:
+        supersedeError,
+    } = await supabase
+      .from(
+        'salary_structures'
+      )
+      .update({
+        status:
+          'superseded',
+
+        effective_until:
+          previousEnd,
+      })
+      .eq(
+        'id',
+        activeStructure.id
+      )
+
+    if (supersedeError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            supersedeError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  await supabase
+    .from(
+      'salary_revisions'
+    )
+    .update({
+      new_salary_structure_id:
+        newStructure.id,
+    })
+    .eq(
+      'id',
+      revision.id
+    )
+
+  /* -----------------------------------------------------
+     FINAL CANONICAL RESULT
+     ----------------------------------------------------- */
+
+  const updated =
+    await getEffectiveCompensation(
+      employeeId,
+      context.companyId
+    )
+
+  return NextResponse.json({
+    success: true,
+
+    message:
+      updated.isComplete
+        ? 'Salary structure updated successfully.'
+        : 'Salary structure saved but remains incomplete.',
+
+    compensation:
+      updated,
+  })
+}
+
+================ EMPLOYEE ROUTE ================
+import {
+  NextRequest,
+  NextResponse,
+} from 'next/server'
+
+import {
+  createAdminClient,
+} from '@/lib/supabase/admin'
+
+import {
+  resolveRequestContext,
+  resolveEmployeeAccess,
+  hasRole,
+} from '@/lib/services/company-resolver'
+
+import {
+  getEffectiveCompensation,
+} from '@/lib/services/compensation-service'
+
+import {
+  Decimal,
+} from '@/lib/utils/decimal'
+
+/* =========================================================
+   GET
+   ========================================================= */
+
+export async function GET(
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      employeeId: string
+    }>
+  }
+) {
+  const resolved =
+    await resolveRequestContext()
+
+  if (!resolved.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          resolved.error.message,
+      },
+      {
+        status:
+          resolved.error.status,
+      }
+    )
+  }
+
+  const {
+    context,
+  } = resolved
+
+  const {
+    employeeId,
+  } = await params
+
+  const access =
+    resolveEmployeeAccess(
+      context,
+      employeeId
+    )
+
+  if (
+    access.denied ||
+    (
+      access.employeeId &&
+      access.employeeId !==
+        employeeId
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Forbidden',
+      },
+      {
+        status: 403,
+      }
+    )
+  }
+
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Database unavailable.',
+      },
+      {
+        status: 503,
+      }
+    )
+  }
+
+  const {
+    data: structures,
+    error:
+      structureError,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .select(`
+      *,
+      salary_structure_components (
+        *,
+        component:component_id (*)
+      )
+    `)
+    .eq(
+      'company_id',
+      context.companyId
+    )
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .order(
+      'effective_from',
+      {
+        ascending: false,
+      }
+    )
+
+  if (structureError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          structureError.message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  const {
+    data:
+      statutoryDetails,
+  } = await supabase
+    .from(
+      'employee_statutory_details'
+    )
+    .select(`
+      pf_applicable,
+      uan_number,
+      pf_number,
+      pf_joining_date,
+      esi_applicable,
+      esi_number,
+      pt_applicable,
+      pt_state,
+      pt_amount,
+      tax_regime,
+      pan_masked
+    `)
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .maybeSingle()
+
+  const effective =
+    await getEffectiveCompensation(
+      employeeId,
+      context.companyId
+    )
+
+  let compensation:
+    any = null
+
+  if (
+    effective.structureId
+  ) {
+    const findComponent = (
+      ...codes: string[]
+    ) =>
+      effective.components.find(
+        (component) =>
+          codes.includes(
+            component.code.toUpperCase()
+          )
+      )
+
+    const basic =
+      findComponent(
+        'BASIC'
+      )
+
+    const hra =
+      findComponent(
+        'HRA'
+      )
+
+    const special =
+      findComponent(
+        'SPECIAL_ALLOWANCE',
+        'SPECIAL'
+      )
+
+    const conveyance =
+      findComponent(
+        'CONVEYANCE'
+      )
+
+    compensation = {
+      id:
+        effective.structureId,
+
+      ctc:
+        effective.annualCtc,
+
+      annual_ctc:
+        effective.annualCtc,
+
+      monthly_gross:
+        effective.monthlyGross,
+
+      basic_salary:
+        basic
+          ? basic.monthlyAmount
+          : null,
+
+      hra:
+        hra
+          ? hra.monthlyAmount
+          : null,
+
+      special_allowance:
+        special
+          ? special.monthlyAmount
+          : null,
+
+      conveyance_allowance:
+        conveyance
+          ? conveyance.monthlyAmount
+          : null,
+
+      /**
+       * PT comes from employee_statutory_details,
+       * not from an invented salary component.
+       */
+      pt_deduction:
+        statutoryDetails?.pt_amount ??
+        null,
+
+      pt_applicable:
+        statutoryDetails?.pt_applicable ??
+        null,
+
+      pt_state:
+        statutoryDetails?.pt_state ??
+        null,
+
+      pf_applicable:
+        statutoryDetails?.pf_applicable ??
+        null,
+
+      esi_applicable:
+        statutoryDetails?.esi_applicable ??
+        null,
+
+      pan_masked:
+        statutoryDetails?.pan_masked ??
+        null,
+
+      effective_from:
+        effective.effectiveFrom,
+
+      status:
+        effective.status,
+
+      isComplete:
+        effective.isComplete,
+
+      incompletenessReasons:
+        effective.incompletenessReasons,
+
+      grossEarningsFromComponents:
+        effective.grossEarningsFromComponents,
+
+      totalDeductionsFromComponents:
+        effective.totalDeductionsFromComponents,
+
+      components:
+        effective.components.map(
+          (component: any) => ({
+            id:
+              component.id,
+
+            componentId:
+              component.componentId,
+
+            name:
+              component.name,
+
+            code:
+              component.code,
+
+            type:
+              component.type,
+
+            category:
+              component.category,
+
+            monthly:
+              component.monthlyAmount,
+
+            monthly_amount:
+              component.monthlyAmount,
+
+            annual:
+              component.annualAmount,
+
+            annual_amount:
+              component.annualAmount,
+
+            isTaxable:
+              component.isTaxable,
+
+            isStatutory:
+              component.isStatutory,
+
+            isActive:
+              component.isActive,
+          })
+        ),
+    }
+  }
+
+  return NextResponse.json({
+    success: true,
+
+    compensation,
+
+    statutoryDetails:
+      statutoryDetails || null,
+
+    effective,
+
+    history:
+      structures || [],
+
+    data:
+      structures || [],
+  })
+}
+
+/* =========================================================
+   CREATE NEW COMPENSATION VERSION
+   ========================================================= */
+
+export async function POST(
+  request: NextRequest,
+  {
+    params,
+  }: {
+    params: Promise<{
+      employeeId: string
+    }>
+  }
+) {
+  const resolved =
+    await resolveRequestContext()
+
+  if (!resolved.ok) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          resolved.error.message,
+      },
+      {
+        status:
+          resolved.error.status,
+      }
+    )
+  }
+
+  const {
+    context,
+  } = resolved
+
+  if (
+    !hasRole(
+      context,
+      'SUPER_ADMIN',
+      'HR_ADMIN',
+      'PAYROLL_ADMIN'
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Insufficient permissions to modify compensation.',
+      },
+      {
+        status: 403,
+      }
+    )
+  }
+
+  const {
+    employeeId,
+  } = await params
+
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Database unavailable.',
+      },
+      {
+        status: 503,
+      }
+    )
+  }
+
+  const body =
+    await request.json()
+
+  const {
+    annual_ctc,
+    monthly_gross,
+    effective_from,
+    components,
+    reason,
+
+    pt_amount,
+    pt_applicable,
+    pt_state,
+
+    allow_incomplete =
+      false,
+  } = body
+
+  const ctc =
+    Number(
+      annual_ctc || 0
+    )
+
+  const gross =
+    Number(
+      monthly_gross || 0
+    )
+
+  if (
+    !Number.isFinite(ctc) ||
+    ctc <= 0
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Annual CTC must be greater than zero.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  if (
+    !Number.isFinite(gross) ||
+    gross <= 0
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Monthly Gross must be greater than zero.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  if (gross > ctc) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Monthly Gross cannot exceed Annual CTC.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  const requestedComponents =
+    Array.isArray(components)
+      ? components
+      : []
+
+  if (
+    requestedComponents.length ===
+      0 &&
+    !allow_incomplete
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Salary components are required before activating this compensation structure.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     RESOLVE COMPONENT DEFINITIONS FIRST
+     ----------------------------------------------------- */
+
+  const resolvedComponents:
+    Array<{
+      componentId: string
+      code: string
+      name: string
+      type: string
+      monthlyAmount: number
+      annualAmount: number
+      calculationType: string
+    }> = []
+
+  for (
+    const component of requestedComponents
+  ) {
+    let code =
+      String(
+        component.code ||
+          component.component_code ||
+          ''
+      )
+        .trim()
+        .toUpperCase()
+
+    if (
+      code === 'SPECIAL'
+    ) {
+      code =
+        'SPECIAL_ALLOWANCE'
+    }
+
+    if (!code) {
+      continue
+    }
+
+    const monthlyAmount =
+      Number(
+        component.monthly_amount ??
+          component.monthly ??
+          0
+      )
+
+    if (
+      !Number.isFinite(
+        monthlyAmount
+      ) ||
+      monthlyAmount < 0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Invalid monthly amount for ${code}.`,
+        },
+        {
+          status: 400,
+        }
+      )
+    }
+
+    const {
+      data:
+        definition,
+      error:
+        definitionError,
+    } = await supabase
+      .from(
+        'salary_components'
+      )
+      .select(
+        'id, code, name, type'
+      )
+      .eq(
+        'company_id',
+        context.companyId
+      )
+      .eq(
+        'code',
+        code
+      )
+      .eq(
+        'is_active',
+        true
+      )
+      .maybeSingle()
+
+    if (
+      definitionError
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            definitionError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+
+    if (!definition) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Salary component "${code}" is not configured for this company.`,
+        },
+        {
+          status: 400,
+        }
+      )
+    }
+
+    resolvedComponents.push({
+      componentId:
+        definition.id,
+
+      code:
+        definition.code,
+
+      name:
+        definition.name,
+
+      type:
+        definition.type,
+
+      monthlyAmount,
+
+      annualAmount:
+        Number(
+          component.annual_amount ??
+            component.annual ??
+            monthlyAmount * 12
+        ),
+
+      calculationType:
+        component.calculation_type ||
+        'FLAT',
+    })
+  }
+
+  /* -----------------------------------------------------
+     GROSS RECONCILIATION
+     ----------------------------------------------------- */
+
+  const earningComponents =
+    resolvedComponents.filter(
+      (component) =>
+        component.type ===
+        'earning'
+    )
+
+  const earningsTotal =
+    earningComponents.reduce(
+      (
+        total,
+        component
+      ) =>
+        Decimal.from(total)
+          .add(
+            component.monthlyAmount
+          )
+          .toNumber(),
+      0
+    )
+
+  if (
+    earningComponents.length >
+      0 &&
+    Math.abs(
+      earningsTotal -
+        gross
+    ) > 0.01
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+
+        error:
+          `Component total â‚¹${earningsTotal.toLocaleString(
+            'en-IN'
+          )} does not match Monthly Gross â‚¹${gross.toLocaleString(
+            'en-IN'
+          )}.`,
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     PT VALIDATION
+     ----------------------------------------------------- */
+
+  const ptAmount =
+    pt_amount !== undefined &&
+    pt_amount !== null &&
+    pt_amount !== ''
+      ? Number(pt_amount)
+      : null
+
+  if (
+    ptAmount !== null &&
+    (
+      !Number.isFinite(
+        ptAmount
+      ) ||
+      ptAmount < 0
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Professional Tax must be zero or positive.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     EXISTING ACTIVE STRUCTURE
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      activeStructure,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .select(
+      'id, annual_ctc, effective_from'
+    )
+    .eq(
+      'company_id',
+      context.companyId
+    )
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .eq(
+      'status',
+      'active'
+    )
+    .maybeSingle()
+
+  const effectiveDate =
+    effective_from ||
+    new Date()
+      .toISOString()
+      .split('T')[0]
+
+  /* -----------------------------------------------------
+     CREATE REVISION RECORD
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      revision,
+    error:
+      revisionError,
+  } = await supabase
+    .from(
+      'salary_revisions'
+    )
+    .insert({
+      company_id:
+        context.companyId,
+
+      employee_id:
+        employeeId,
+
+      old_salary_structure_id:
+        activeStructure?.id ||
+        null,
+
+      old_ctc:
+        activeStructure?.annual_ctc ||
+        0,
+
+      new_ctc:
+        ctc,
+
+      increment_amount:
+        ctc -
+        (
+          activeStructure?.annual_ctc ||
+          0
+        ),
+
+      increment_percentage:
+        activeStructure?.annual_ctc
+          ? (
+              (
+                ctc -
+                activeStructure.annual_ctc
+              ) /
+              activeStructure.annual_ctc
+            ) *
+            100
+          : 0,
+
+      effective_date:
+        effectiveDate,
+
+      reason:
+        reason ||
+        'Compensation structure revision',
+
+      status:
+        'activated',
+
+      requested_by:
+        context.authUserId,
+
+      approved_by:
+        context.authUserId,
+
+      approved_at:
+        new Date().toISOString(),
+    })
+    .select('id')
+    .single()
+
+  if (
+    revisionError ||
+    !revision
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          revisionError?.message ||
+          'Unable to create compensation revision.',
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     CREATE NEW STRUCTURE
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      newStructure,
+    error:
+      structureError,
+  } = await supabase
+    .from(
+      'salary_structures'
+    )
+    .insert({
+      company_id:
+        context.companyId,
+
+      employee_id:
+        employeeId,
+
+      annual_ctc:
+        ctc,
+
+      monthly_gross:
+        gross,
+
+      effective_from:
+        effectiveDate,
+
+      status:
+        'active',
+
+      revision_id:
+        revision.id,
+
+      notes:
+        resolvedComponents.length ===
+        0
+          ? 'Salary structure incomplete.'
+          : null,
+
+      created_by:
+        context.authUserId,
+    })
+    .select('id')
+    .single()
+
+  if (
+    structureError ||
+    !newStructure
+  ) {
+    await supabase
+      .from(
+        'salary_revisions'
+      )
+      .delete()
+      .eq(
+        'id',
+        revision.id
+      )
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          structureError?.message ||
+          'Unable to create salary structure.',
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -----------------------------------------------------
+     COMPONENTS
+     ----------------------------------------------------- */
+
+  if (
+    resolvedComponents.length >
+    0
+  ) {
+    const rows =
+      resolvedComponents.map(
+        (component) => ({
+          salary_structure_id:
+            newStructure.id,
+
+          component_id:
+            component.componentId,
+
+          monthly_amount:
+            component.monthlyAmount,
+
+          annual_amount:
+            component.annualAmount,
+
+          calculation_type:
+            component.calculationType,
+
+          is_active:
+            true,
+        })
+      )
+
+    const {
+      error:
+        componentError,
+    } = await supabase
+      .from(
+        'salary_structure_components'
+      )
+      .insert(rows)
+
+    if (componentError) {
+      await supabase
+        .from(
+          'salary_structures'
+        )
+        .delete()
+        .eq(
+          'id',
+          newStructure.id
+        )
+
+      await supabase
+        .from(
+          'salary_revisions'
+        )
+        .delete()
+        .eq(
+          'id',
+          revision.id
+        )
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            componentError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  /* -----------------------------------------------------
+     UPDATE PT CONFIGURATION
+     ----------------------------------------------------- */
+
+  const {
+    data:
+      existingStatutory,
+  } = await supabase
+    .from(
+      'employee_statutory_details'
+    )
+    .select('id')
+    .eq(
+      'employee_id',
+      employeeId
+    )
+    .maybeSingle()
+
+  const ptApplicable =
+    typeof pt_applicable ===
+    'boolean'
+      ? pt_applicable
+      : ptAmount !== null &&
+        ptAmount > 0
+
+  if (
+    existingStatutory
+  ) {
+    const {
+      error:
+        statutoryError,
+    } = await supabase
+      .from(
+        'employee_statutory_details'
+      )
+      .update({
+        pt_applicable:
+          ptApplicable,
+
+        pt_amount:
+          ptAmount,
+
+        pt_state:
+          ptApplicable
+            ? pt_state ||
+              'Telangana'
+            : null,
+      })
+      .eq(
+        'id',
+        existingStatutory.id
+      )
+
+    if (statutoryError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            statutoryError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  } else {
+    const {
+      error:
+        statutoryError,
+    } = await supabase
+      .from(
+        'employee_statutory_details'
+      )
+      .insert({
+        employee_id:
+          employeeId,
+
+        pt_applicable:
+          ptApplicable,
+
+        pt_amount:
+          ptAmount,
+
+        pt_state:
+          ptApplicable
+            ? pt_state ||
+              'Telangana'
+            : null,
+      })
+
+    if (statutoryError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            statutoryError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  /* -----------------------------------------------------
+     SUPERSEDE PREVIOUS STRUCTURE ONLY AFTER SUCCESS
+     ----------------------------------------------------- */
+
+  if (activeStructure) {
+    const previousEnd =
+      new Date(
+        new Date(
+          effectiveDate
+        ).getTime() -
+          86_400_000
+      )
+        .toISOString()
+        .split('T')[0]
+
+    const {
+      error:
+        supersedeError,
+    } = await supabase
+      .from(
+        'salary_structures'
+      )
+      .update({
+        status:
+          'superseded',
+
+        effective_until:
+          previousEnd,
+      })
+      .eq(
+        'id',
+        activeStructure.id
+      )
+
+    if (supersedeError) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            supersedeError.message,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+  }
+
+  await supabase
+    .from(
+      'salary_revisions'
+    )
+    .update({
+      new_salary_structure_id:
+        newStructure.id,
+    })
+    .eq(
+      'id',
+      revision.id
+    )
+
+  /* -----------------------------------------------------
+     FINAL CANONICAL RESULT
+     ----------------------------------------------------- */
+
+  const updated =
+    await getEffectiveCompensation(
+      employeeId,
+      context.companyId
+    )
+
+  return NextResponse.json({
+    success: true,
+
+    message:
+      updated.isComplete
+        ? 'Salary structure updated successfully.'
+        : 'Salary structure saved but remains incomplete.',
+
+    compensation:
+      updated,
+  })
+}
