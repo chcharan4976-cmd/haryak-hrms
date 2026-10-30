@@ -278,14 +278,12 @@ export async function POST(
   const body =
     await request.json()
 
-  const {
-    employee_id,
-    leave_type_id,
-    start_date,
-    end_date,
-    total_days,
-    reason,
-  } = body
+  const employee_id = body.employee_id || body.employeeId
+  const leave_type_id = body.leave_type_id || body.leaveTypeId
+  const start_date = body.start_date || body.startDate
+  const end_date = body.end_date || body.endDate
+  const total_days = body.total_days ?? body.totalDays
+  const reason = body.reason
 
   const employeeOnly =
     context.roles.every(

@@ -28,7 +28,9 @@ import {
   Lock,
   Layers,
   Archive,
+  Trash2,
 } from 'lucide-react'
+
 
 import { PageHeader } from '@/components/shared/page-header'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -57,6 +59,15 @@ import {
   TabsList,
   TabsTrigger,
 } from '@/components/ui/tabs'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { toast } from 'sonner'
 
 import { OfficialLetterheadRenderer } from '@/components/documents/document-renderer'
@@ -241,6 +252,7 @@ export default function DocumentsPage() {
   const [editorDoc, setEditorDoc] = useState<EnterpriseDocumentItem | null>(null)
   const [editorValue, setEditorValue] = useState<EditableDocumentContent | null>(null)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
+  const [deleteTargetDoc, setDeleteTargetDoc] = useState<EnterpriseDocumentItem | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
 
   /* ============================================================
@@ -309,8 +321,8 @@ export default function DocumentsPage() {
         const defaultSignatory =
           data.signatories.find((signatory: any) => signatory.isDefault) || data.signatories[0]
         if (defaultSignatory) {
-          setGenSignatoryName(defaultSignatory.name)
-          setGenSignatoryTitle(defaultSignatory.title)
+          setGenSignatoryName(defaultSignatory.name || '')
+          setGenSignatoryTitle(defaultSignatory.title || '')
         }
       }
     } catch (error) {
@@ -422,6 +434,87 @@ export default function DocumentsPage() {
       setActionLoading(false)
     }
   }
+
+  const handleSaveAndIssue = async (value: EditableDocumentContent) => {
+    if (!editorDoc) return
+    setActionLoading(true)
+    try {
+      const updatedContent = editorValueToPersistedContent(value, editorDoc.content)
+      const response = await fetch(`/api/documents/${editorDoc.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: updatedContent,
+          documentNumber: value.documentNumber,
+          issueDate: value.issueDate,
+          effectiveDate: value.effectiveDate,
+          title: value.subject,
+          changeReason: 'Document content updated and issued to employee portal',
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update document.')
+      }
+
+      const targetId = data.document?.id || editorDoc.id
+      const issueRes = await fetch(`/api/documents/${targetId}/issue`, {
+        method: 'POST',
+      })
+      const issueData = await issueRes.json()
+      if (!issueRes.ok || !issueData.success) {
+        throw new Error(issueData.error || 'Failed to issue document.')
+      }
+
+      toast.success('Document saved and issued to Employee Portal successfully!')
+      setIsEditorOpen(false)
+      await fetchDocuments()
+    } catch (error: any) {
+      toast.error(error?.message || 'Error saving and issuing document.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleIssueLetter = async (docId: string) => {
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/documents/${docId}/issue`, {
+        method: 'POST',
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to issue letter.')
+      }
+      toast.success(data.message || 'Official letter issued to Employee Portal successfully!')
+      await fetchDocuments()
+    } catch (err: any) {
+      toast.error(err?.message || 'Error issuing letter.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleDeleteDocument = async (doc: EnterpriseDocumentItem) => {
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/documents/${doc.id}`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete document')
+      }
+      toast.success(data.message || 'Document permanently deleted.')
+      setDeleteTargetDoc(null)
+      await fetchDocuments()
+    } catch (err: any) {
+      toast.error(err?.message || 'Error deleting document.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
 
   const handleDownloadFile = (doc: EnterpriseDocumentItem) => {
     if (doc.content) {
@@ -632,67 +725,83 @@ export default function DocumentsPage() {
                     />
                   </div>
 
-                  <select
+                  <Select
                     value={selectedCategory}
-                    onChange={e => setSelectedCategory(e.target.value)}
-                    className="h-9 rounded-md border bg-background px-2.5 text-xs max-w-[150px]"
+                    onValueChange={val => setSelectedCategory(val)}
                   >
-                    <option value="ALL">All Categories</option>
-                    <optgroup label="Identity & Onboarding">
-                      {DOCUMENT_CATEGORIES.filter(c => c.group === 'identity_onboarding').map(c => (
-                        <option key={c.code} value={c.code}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Employment & HR">
-                      {DOCUMENT_CATEGORIES.filter(c => c.group === 'employment_hr').map(c => (
-                        <option key={c.code} value={c.code}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Payroll & Statutory">
-                      {DOCUMENT_CATEGORIES.filter(c => c.group === 'payroll_statutory').map(c => (
-                        <option key={c.code} value={c.code}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                    <optgroup label="Company Policies">
-                      {DOCUMENT_CATEGORIES.filter(c => c.group === 'company_policy').map(c => (
-                        <option key={c.code} value={c.code}>
-                          {c.name}
-                        </option>
-                      ))}
-                    </optgroup>
-                  </select>
+                    <SelectTrigger className="h-9 w-auto min-w-[140px] text-xs">
+                      <SelectValue placeholder="All Categories" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All Categories</SelectItem>
+                      <SelectGroup>
+                        <SelectLabel>Identity & Onboarding</SelectLabel>
+                        {DOCUMENT_CATEGORIES.filter(c => c.group === 'identity_onboarding').map(c => (
+                          <SelectItem key={c.code} value={c.code}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                      <SelectGroup>
+                        <SelectLabel>Employment & HR</SelectLabel>
+                        {DOCUMENT_CATEGORIES.filter(c => c.group === 'employment_hr').map(c => (
+                          <SelectItem key={c.code} value={c.code}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                      <SelectGroup>
+                        <SelectLabel>Payroll & Statutory</SelectLabel>
+                        {DOCUMENT_CATEGORIES.filter(c => c.group === 'payroll_statutory').map(c => (
+                          <SelectItem key={c.code} value={c.code}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                      <SelectGroup>
+                        <SelectLabel>Company Policies</SelectLabel>
+                        {DOCUMENT_CATEGORIES.filter(c => c.group === 'company_policy').map(c => (
+                          <SelectItem key={c.code} value={c.code}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
 
-                  <select
+                  <Select
                     value={selectedStatus}
-                    onChange={e => setSelectedStatus(e.target.value)}
-                    className="h-9 rounded-md border bg-background px-2.5 text-xs"
+                    onValueChange={val => setSelectedStatus(val)}
                   >
-                    <option value="ALL">All Statuses</option>
-                    <option value="VERIFIED">Verified</option>
-                    <option value="PENDING_VERIFICATION">Pending Review</option>
-                    <option value="REJECTED">Rejected</option>
-                    <option value="REPLACEMENT_REQUESTED">Replacement Requested</option>
-                    <option value="ISSUED">Issued to Portal</option>
-                    <option value="ACKNOWLEDGED">Acknowledged</option>
-                    <option value="DRAFT">Draft</option>
-                  </select>
+                    <SelectTrigger className="h-9 w-auto min-w-[130px] text-xs">
+                      <SelectValue placeholder="All Statuses" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All Statuses</SelectItem>
+                      <SelectItem value="VERIFIED">Verified</SelectItem>
+                      <SelectItem value="PENDING_VERIFICATION">Pending Review</SelectItem>
+                      <SelectItem value="REJECTED">Rejected</SelectItem>
+                      <SelectItem value="REPLACEMENT_REQUESTED">Replacement Requested</SelectItem>
+                      <SelectItem value="ISSUED">Issued to Portal</SelectItem>
+                      <SelectItem value="ACKNOWLEDGED">Acknowledged</SelectItem>
+                      <SelectItem value="DRAFT">Draft</SelectItem>
+                    </SelectContent>
+                  </Select>
 
-                  <select
+                  <Select
                     value={selectedExpiry}
-                    onChange={e => setSelectedExpiry(e.target.value)}
-                    className="h-9 rounded-md border bg-background px-2.5 text-xs"
+                    onValueChange={val => setSelectedExpiry(val)}
                   >
-                    <option value="ALL">All Expiry</option>
-                    <option value="EXPIRING_SOON">Expiring Soon (30d)</option>
-                    <option value="EXPIRED">Expired</option>
-                    <option value="ACTIVE">Active (No Expiry / Valid)</option>
-                  </select>
+                    <SelectTrigger className="h-9 w-auto min-w-[130px] text-xs">
+                      <SelectValue placeholder="All Expiry" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="ALL">All Expiry</SelectItem>
+                      <SelectItem value="EXPIRING_SOON">Expiring Soon (30d)</SelectItem>
+                      <SelectItem value="EXPIRED">Expired</SelectItem>
+                      <SelectItem value="ACTIVE">Active (No Expiry / Valid)</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </CardHeader>
@@ -724,7 +833,7 @@ export default function DocumentsPage() {
               ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-xs">
-                    <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                    <thead className="border-b bg-muted/30 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
                       <tr>
                         <th className="p-3.5 pl-6">Document Ref / Title</th>
                         <th className="p-3.5">Employee</th>
@@ -809,7 +918,18 @@ export default function DocumentsPage() {
                             >
                               <Download className="h-3 w-3" />
                             </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                              title="Delete Document"
+                              onClick={() => setDeleteTargetDoc(document)}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </td>
+
                         </tr>
                       ))}
                     </tbody>
@@ -852,7 +972,7 @@ export default function DocumentsPage() {
             <CardContent className="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                  <thead className="border-b bg-muted/30 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
                     <tr>
                       <th className="p-3.5 pl-6">Reference No</th>
                       <th className="p-3.5">Employee</th>
@@ -876,6 +996,17 @@ export default function DocumentsPage() {
                           <td className="p-3.5">{getStatusBadge(document.status)}</td>
                           <td className="p-3.5 text-muted-foreground font-mono">{document.issueDate?.slice(0, 10)}</td>
                           <td className="p-3.5 pr-6 text-right space-x-1">
+                            {(document.status === 'DRAFT' || document.status === 'APPROVED' || document.status === 'VERIFIED') && (
+                              <Button
+                                size="sm"
+                                className="h-7 text-xs bg-purple-600 text-white hover:bg-purple-700 shadow-sm"
+                                onClick={() => handleIssueLetter(document.id)}
+                                disabled={actionLoading}
+                              >
+                                <Send className="mr-1 h-3 w-3" /> Issue to Portal
+                              </Button>
+                            )}
+
                             <Button
                               variant="outline"
                               size="sm"
@@ -884,7 +1015,19 @@ export default function DocumentsPage() {
                             >
                               <Edit3 className="mr-1 h-3 w-3" /> Edit / Preview
                             </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                              title="Delete Letter"
+                              onClick={() => setDeleteTargetDoc(document)}
+                              disabled={actionLoading}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </Button>
                           </td>
+
                         </tr>
                       ))}
                   </tbody>
@@ -1042,44 +1185,49 @@ export default function DocumentsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2 space-y-1 sm:col-span-1">
                 <Label htmlFor="employee">Employee *</Label>
-                <select
-                  id="employee"
+                <Select
                   value={genEmployeeId}
-                  onChange={event => {
-                    setGenEmployeeId(event.target.value)
-                    const found = employees.find(employee => employee.id === event.target.value)
+                  onValueChange={val => {
+                    setGenEmployeeId(val)
+                    const found = employees.find(employee => employee.id === val)
                     if (found?.joining_date) {
                       setGenEffectiveDate(found.joining_date)
                     }
                   }}
-                  className="w-full rounded-md border bg-background p-2 text-xs font-medium"
-                  required
                 >
-                  {employees.map(employee => (
-                    <option key={employee.id} value={employee.id}>
-                      {employee.employee_code} — {employee.full_name} ({employee.department?.name || 'General'})
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="employee" className="w-full text-xs h-9 font-medium">
+                    <SelectValue placeholder="Select Employee..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {employees.map(employee => (
+                      <SelectItem key={employee.id} value={employee.id}>
+                        {employee.employee_code} — {employee.full_name} ({employee.department?.name || 'General'})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="col-span-2 space-y-1 sm:col-span-1">
                 <Label htmlFor="docType">Document Type *</Label>
-                <select
-                  id="docType"
+                <Select
                   value={genDocType}
-                  onChange={event => setGenDocType(event.target.value)}
-                  className="w-full rounded-md border bg-background p-2 text-xs"
+                  onValueChange={val => setGenDocType(val)}
                 >
-                  <option value="offer_letter">Offer Letter</option>
-                  <option value="appointment_letter">Appointment Letter</option>
-                  <option value="joining_letter">Joining Letter</option>
-                  <option value="salary_revision">Salary Revision Letter</option>
-                  <option value="resignation_acceptance">Resignation Acceptance</option>
-                  <option value="relieving_letter">Relieving Letter</option>
-                  <option value="experience_letter">Experience Letter</option>
-                  <option value="custom_letter">Custom HR Letter</option>
-                </select>
+                  <SelectTrigger id="docType" className="w-full text-xs h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="offer_letter">Offer Letter</SelectItem>
+                    <SelectItem value="appointment_letter">Appointment Letter</SelectItem>
+                    <SelectItem value="joining_letter">Joining Letter</SelectItem>
+                    <SelectItem value="salary_revision">Salary Revision Letter</SelectItem>
+                    <SelectItem value="resignation_acceptance">Resignation Acceptance</SelectItem>
+                    <SelectItem value="relieving_letter">Relieving Letter</SelectItem>
+                    <SelectItem value="experience_letter">Experience Letter</SelectItem>
+                    <SelectItem value="custom_letter">Custom HR Letter</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -1111,23 +1259,26 @@ export default function DocumentsPage() {
             {signatories.length > 0 && (
               <div className="space-y-1">
                 <Label htmlFor="signatorySelect">Select Company Signatory</Label>
-                <select
-                  id="signatorySelect"
-                  className="w-full rounded-md border bg-background p-2 text-xs"
-                  onChange={event => {
-                    const selected = signatories.find(s => s.id === event.target.value)
+                <Select
+                  onValueChange={val => {
+                    const selected = signatories.find(s => s.id === val)
                     if (selected) {
-                      setGenSignatoryName(selected.name)
-                      setGenSignatoryTitle(selected.title)
+                      setGenSignatoryName(selected.name || '')
+                      setGenSignatoryTitle(selected.title || '')
                     }
                   }}
                 >
-                  {signatories.map(s => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} — {s.title} {s.isDefault ? '(Default)' : ''}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger id="signatorySelect" className="w-full text-xs h-9">
+                    <SelectValue placeholder="Select Company Signatory..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {signatories.map(s => (
+                      <SelectItem key={s.id} value={s.id}>
+                        {s.name} — {s.title} {s.isDefault ? '(Default)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             )}
 
@@ -1136,7 +1287,7 @@ export default function DocumentsPage() {
                 <Label htmlFor="sigName">Authorized Signatory Name</Label>
                 <Input
                   id="sigName"
-                  value={genSignatoryName}
+                  value={genSignatoryName ?? ''}
                   onChange={event => setGenSignatoryName(event.target.value)}
                   className="h-9 text-xs"
                 />
@@ -1146,7 +1297,7 @@ export default function DocumentsPage() {
                 <Label htmlFor="sigTitle">Signatory Title</Label>
                 <Input
                   id="sigTitle"
-                  value={genSignatoryTitle}
+                  value={genSignatoryTitle ?? ''}
                   onChange={event => setGenSignatoryTitle(event.target.value)}
                   className="h-9 text-xs"
                 />
@@ -1200,6 +1351,7 @@ export default function DocumentsPage() {
                   value={editorValue}
                   onChange={setEditorValue}
                   onSave={handleSaveDraft}
+                  onSaveAndIssue={handleSaveAndIssue}
                   saving={actionLoading}
                 />
               </div>
@@ -1207,9 +1359,54 @@ export default function DocumentsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Permanent Deletion Confirmation Modal */}
+      <Dialog open={Boolean(deleteTargetDoc)} onOpenChange={open => !open && setDeleteTargetDoc(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600 text-base">
+              <AlertTriangle className="h-5 w-5" /> Permanently Delete Document
+            </DialogTitle>
+            <DialogDescription className="text-xs space-y-2 pt-2">
+              <p>
+                Are you sure you want to permanently delete <strong>{deleteTargetDoc?.title}</strong>?
+              </p>
+              {deleteTargetDoc?.employeeName && (
+                <p className="text-muted-foreground">
+                  Employee: <strong>{deleteTargetDoc.employeeName}</strong>{' '}
+                  {deleteTargetDoc.employeeCode ? `(${deleteTargetDoc.employeeCode})` : ''}
+                </p>
+              )}
+              <p className="text-red-600 font-medium">
+                This will delete the document metadata record, version history, and associated file storage. This action cannot be undone.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTargetDoc(null)}
+              disabled={actionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => deleteTargetDoc && handleDeleteDocument(deleteTargetDoc)}
+              disabled={actionLoading}
+            >
+              {actionLoading ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+              Permanently Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
+
 
 function StationeryMetric({
   label,

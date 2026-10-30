@@ -17,8 +17,17 @@ import {
   FolderOpen,
   FileCheck,
   BookOpen,
+  Trash2,
 } from 'lucide-react'
 
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { EmptyState } from '@/components/shared/empty-state'
@@ -64,6 +73,8 @@ export default function MyDocumentsPage() {
   const [isDetailsOpen, setIsDetailsOpen] = useState(false)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false)
   const [acknowledgingId, setAcknowledgingId] = useState<string | null>(null)
+  const [deleteTargetDoc, setDeleteTargetDoc] = useState<EnterpriseDocumentItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   /* ============================================================
      FETCH EMPLOYEE DOCUMENTS
@@ -141,6 +152,58 @@ export default function MyDocumentsPage() {
     }
   }
 
+  const handleDeleteUploadedDoc = async () => {
+    if (!deleteTargetDoc) return
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/documents/${deleteTargetDoc.id}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || 'Failed to delete document.')
+      }
+      toast.success('Document deleted successfully.')
+      setDeleteTargetDoc(null)
+      await fetchDocuments()
+    } catch (err: any) {
+      toast.error(err?.message || 'Error deleting document.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const getExpiryBadge = (doc: EnterpriseDocumentItem) => {
+    if (!doc.expiryDate) {
+      return <span className="text-[11px] text-muted-foreground">No Expiry</span>
+    }
+    const rawDate = doc.expiryDate.slice(0, 10)
+    if (doc.expiryStatus === 'EXPIRED') {
+      return (
+        <div className="space-y-0.5">
+          <div className="text-[11px] font-mono text-red-600 font-semibold">{rawDate}</div>
+          <Badge variant="destructive" className="text-[9px] py-0">Expired</Badge>
+        </div>
+      )
+    }
+    if (doc.expiryStatus === 'EXPIRING_SOON') {
+      return (
+        <div className="space-y-0.5">
+          <div className="text-[11px] font-mono text-amber-600 font-semibold">{rawDate}</div>
+          <Badge className="bg-amber-500 text-white text-[9px] py-0">{doc.daysUntilExpiry}d left</Badge>
+        </div>
+      )
+    }
+    return (
+      <div className="space-y-0.5">
+        <div className="text-[11px] font-mono text-foreground">{rawDate}</div>
+        <Badge className="bg-emerald-600 text-white text-[9px] py-0">Valid</Badge>
+      </div>
+    )
+  }
+
+
   // Filter into categories
   const issuedLetters = useMemo(() => {
     return documents.filter(
@@ -209,7 +272,7 @@ export default function MyDocumentsPage() {
 
         <Button
           size="sm"
-          className="bg-[#1e2a78] text-white hover:bg-[#152060] text-xs shadow-sm"
+          className="w-full sm:w-auto bg-[#1e2a78] text-white hover:bg-[#152060] text-xs shadow-sm"
           onClick={() => {
             setReplaceDocId(undefined)
             setUploadCategory('identity_proof')
@@ -307,8 +370,8 @@ export default function MyDocumentsPage() {
 
         {/* Tab 1: Issued Letters */}
         <TabsContent value="letters" className="space-y-4">
-          <Card>
-            <CardHeader className="border-b bg-muted/20 pb-3">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b bg-muted/20 p-3 sm:p-4 pb-3">
               <CardTitle className="text-base font-bold">Official Company Letters</CardTitle>
               <CardDescription className="text-xs">
                 Offer letters, appointment letters, salary revisions, and official service certificates issued to you.
@@ -317,12 +380,12 @@ export default function MyDocumentsPage() {
 
             <CardContent className="p-0">
               {loading ? (
-                <div className="flex flex-col items-center justify-center p-12">
+                <div className="flex flex-col items-center justify-center p-8 sm:p-12">
                   <Loader2 className="mb-2 h-8 w-8 animate-spin text-[#1e2a78]" />
                   <p className="text-xs text-muted-foreground">Loading your official letters...</p>
                 </div>
               ) : issuedLetters.length === 0 ? (
-                <div className="p-8">
+                <div className="p-6 sm:p-8">
                   <EmptyState
                     icon={FolderOpen}
                     title="No letters issued yet."
@@ -330,13 +393,14 @@ export default function MyDocumentsPage() {
                   />
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                <div className="relative w-full overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-xs">
+                    <thead className="border-b bg-muted/30 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
                       <tr>
                         <th className="p-3.5 pl-6">Reference No</th>
                         <th className="p-3.5">Document Title</th>
                         <th className="p-3.5">Issue Date</th>
+                        <th className="p-3.5">Expiry</th>
                         <th className="p-3.5">Status</th>
                         <th className="p-3.5 pr-6 text-right">Actions</th>
                       </tr>
@@ -350,6 +414,7 @@ export default function MyDocumentsPage() {
                             <div className="text-[11px] text-muted-foreground">{getCategoryLabel(doc.category)}</div>
                           </td>
                           <td className="p-3.5 font-mono text-muted-foreground">{doc.issueDate?.slice(0, 10)}</td>
+                          <td className="p-3.5">{getExpiryBadge(doc)}</td>
                           <td className="p-3.5">{getStatusBadge(doc.status)}</td>
                           <td className="p-3.5 pr-6 text-right space-x-1.5">
                             <Button
@@ -401,9 +466,9 @@ export default function MyDocumentsPage() {
 
         {/* Tab 2: Uploaded Records */}
         <TabsContent value="uploads" className="space-y-4">
-          <Card>
-            <CardHeader className="border-b bg-muted/20 pb-3">
-              <div className="flex items-center justify-between">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b bg-muted/20 p-3 sm:p-4 pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <CardTitle className="text-base font-bold">My Uploaded Documents</CardTitle>
                   <CardDescription className="text-xs">
@@ -412,7 +477,7 @@ export default function MyDocumentsPage() {
                 </div>
                 <Button
                   size="sm"
-                  className="bg-[#1e2a78] text-white hover:bg-[#152060] text-xs"
+                  className="w-full sm:w-auto bg-[#1e2a78] text-white hover:bg-[#152060] text-xs shrink-0"
                   onClick={() => {
                     setReplaceDocId(undefined)
                     setUploadCategory('identity_proof')
@@ -427,7 +492,7 @@ export default function MyDocumentsPage() {
 
             <CardContent className="p-0">
               {myUploadedDocs.length === 0 ? (
-                <div className="p-8">
+                <div className="p-6 sm:p-8">
                   <EmptyState
                     icon={UploadCloud}
                     title="No documents uploaded yet."
@@ -444,13 +509,14 @@ export default function MyDocumentsPage() {
                   />
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                <div className="relative w-full overflow-x-auto">
+                  <table className="w-full min-w-[700px] text-left text-xs">
+                    <thead className="border-b bg-muted/30 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
                       <tr>
                         <th className="p-3.5 pl-6">Document Title</th>
                         <th className="p-3.5">Category</th>
                         <th className="p-3.5">Status</th>
+                        <th className="p-3.5">Expiry</th>
                         <th className="p-3.5">Uploaded Date</th>
                         <th className="p-3.5">Version</th>
                         <th className="p-3.5 pr-6 text-right">Actions</th>
@@ -471,6 +537,7 @@ export default function MyDocumentsPage() {
                             </Badge>
                           </td>
                           <td className="p-3.5">{getStatusBadge(doc.status)}</td>
+                          <td className="p-3.5">{getExpiryBadge(doc)}</td>
                           <td className="p-3.5 text-muted-foreground font-mono">{doc.createdAt?.slice(0, 10)}</td>
                           <td className="p-3.5 font-mono text-[11px]">v{doc.version || 1}</td>
                           <td className="p-3.5 pr-6 text-right space-x-1">
@@ -494,7 +561,20 @@ export default function MyDocumentsPage() {
                             >
                               <Download className="h-3 w-3" />
                             </Button>
+
+                            {doc.status !== 'VERIFIED' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                                title="Delete Uploaded Record"
+                                onClick={() => setDeleteTargetDoc(doc)}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            )}
                           </td>
+
                         </tr>
                       ))}
                     </tbody>
@@ -507,8 +587,8 @@ export default function MyDocumentsPage() {
 
         {/* Tab 3: Company Policies */}
         <TabsContent value="policies" className="space-y-4">
-          <Card>
-            <CardHeader className="border-b bg-muted/20 pb-3">
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b bg-muted/20 p-3 sm:p-4 pb-3">
               <CardTitle className="text-base font-bold">Company Handbooks & Policies</CardTitle>
               <CardDescription className="text-xs">
                 Haryak Technologies India Private Limited code of conduct, information security, and employee policies.
@@ -517,7 +597,7 @@ export default function MyDocumentsPage() {
 
             <CardContent className="p-0">
               {companyPolicies.length === 0 ? (
-                <div className="p-8">
+                <div className="p-6 sm:p-8">
                   <EmptyState
                     icon={BookOpen}
                     title="No company policies published."
@@ -525,9 +605,9 @@ export default function MyDocumentsPage() {
                   />
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+                <div className="relative w-full overflow-x-auto">
+                  <table className="w-full min-w-[580px] text-left text-xs">
+                    <thead className="border-b bg-muted/30 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
                       <tr>
                         <th className="p-3.5 pl-6">Policy Document</th>
                         <th className="p-3.5">Category</th>
@@ -618,6 +698,45 @@ export default function MyDocumentsPage() {
         onOpenChange={setIsPreviewOpen}
         document={selectedDoc}
       />
+
+      {/* Delete Confirmation Modal */}
+      <Dialog open={Boolean(deleteTargetDoc)} onOpenChange={open => !open && setDeleteTargetDoc(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600 text-base">
+              <AlertTriangle className="h-5 w-5" /> Delete Uploaded Document
+            </DialogTitle>
+            <DialogDescription className="text-xs space-y-2 pt-2">
+              <p>
+                Are you sure you want to delete your uploaded document <strong>{deleteTargetDoc?.title}</strong>?
+              </p>
+              <p className="text-red-600 font-medium">
+                This will remove the file from your profile. You may upload a replacement at any time.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteTargetDoc(null)}
+              disabled={deleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleDeleteUploadedDoc}
+              disabled={deleting}
+            >
+              {deleting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+              Delete Document
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
+

@@ -54,9 +54,9 @@ export default function ForgotPasswordPage() {
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-muted/40">
+    <div className="min-h-screen min-h-[100dvh] w-full flex items-center justify-center p-3 sm:p-6 lg:p-8 bg-muted/40">
       <Card className="w-full max-w-md shadow-lg border">
-        <CardHeader className="text-center space-y-3 pb-6 border-b">
+        <CardHeader className="text-center space-y-3 p-4 sm:p-6 pb-6 border-b">
           <div className="mx-auto bg-white p-2 rounded-xl border shadow-sm w-fit">
             <Image
               src="/logo.jpg"
@@ -68,13 +68,13 @@ export default function ForgotPasswordPage() {
             />
           </div>
           <div>
-            <span className="text-xs font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-400 block mb-1">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#1e2a78] dark:text-blue-400 block mb-1">
               Account Recovery
             </span>
-            <CardTitle className="text-2xl font-bold text-foreground">
+            <CardTitle className="text-xl sm:text-2xl font-bold text-foreground">
               Reset Your Password
             </CardTitle>
-            <CardDescription className="text-sm mt-1">
+            <CardDescription className="text-xs sm:text-sm mt-1">
               Enter your Employee ID or registered company email address to receive password reset instructions.
             </CardDescription>
           </div>

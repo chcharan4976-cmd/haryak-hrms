@@ -45,6 +45,7 @@ export interface ChatMessage {
   readAt?: string | null
 
   createdAt: string
+  expiresAt?: string
 }
 
 export interface ChatConversation {
@@ -153,6 +154,12 @@ function mapMessage(
 
     createdAt:
       row.created_at,
+
+    expiresAt:
+      row.expires_at ||
+      new Date(
+        new Date(row.created_at).getTime() + 14 * 24 * 60 * 60 * 1000
+      ).toISOString(),
   }
 }
 
@@ -1033,34 +1040,100 @@ export async function getUserConversations(
       }
     }
 
-    const {
-      data: lastRows,
-    } = await supabase
-      .from(
-        'chat_messages'
+    const nowIso =
+      new Date().toISOString()
+
+    const cutoffIso =
+      new Date(
+        Date.now() - 14 * 24 * 60 * 60 * 1000
+      ).toISOString()
+
+    let lastRows:
+      | {
+          content: any
+          sender_name: any
+          created_at: any
+          expires_at?: any
+        }[]
+      | null = null
+
+    const primaryQuery =
+      await supabase
+        .from(
+          'chat_messages'
+        )
+        .select(
+          'content,sender_name,created_at,expires_at'
+        )
+        .eq(
+          'company_id',
+          companyId
+        )
+        .eq(
+          'conversation_id',
+          row.id
+        )
+        .is(
+          'deleted_at',
+          null
+        )
+        .gte(
+          'expires_at',
+          nowIso
+        )
+        .order(
+          'created_at',
+          {
+            ascending: false,
+          }
+        )
+        .limit(1)
+
+    lastRows =
+      primaryQuery.data
+
+    if (
+      primaryQuery.error &&
+      primaryQuery.error.message?.includes(
+        'expires_at'
       )
-      .select(
-        'content,sender_name,created_at'
-      )
-      .eq(
-        'company_id',
-        companyId
-      )
-      .eq(
-        'conversation_id',
-        row.id
-      )
-      .is(
-        'deleted_at',
+    ) {
+      const fallback =
+        await supabase
+          .from(
+            'chat_messages'
+          )
+          .select(
+            'content,sender_name,created_at'
+          )
+          .eq(
+            'company_id',
+            companyId
+          )
+          .eq(
+            'conversation_id',
+            row.id
+          )
+          .is(
+            'deleted_at',
+            null
+          )
+          .gte(
+            'created_at',
+            cutoffIso
+          )
+          .order(
+            'created_at',
+            {
+              ascending: false,
+            }
+          )
+          .limit(1)
+
+      lastRows =
+        (fallback.data as any) ||
         null
-      )
-      .order(
-        'created_at',
-        {
-          ascending: false,
-        }
-      )
-      .limit(1)
+    }
 
     const {
       count:
@@ -1093,8 +1166,28 @@ export async function getUserConversations(
         null
       )
 
-    const last =
+    const lastCandidate =
       lastRows?.[0]
+
+    const nowMs =
+      Date.now()
+
+    const isLastExpired =
+      lastCandidate &&
+      ((lastCandidate.expires_at &&
+        new Date(
+          lastCandidate.expires_at
+        ).getTime() <= nowMs) ||
+        nowMs -
+          new Date(
+            lastCandidate.created_at
+          ).getTime() >=
+          14 * 24 * 60 * 60 * 1000)
+
+    const last =
+      isLastExpired
+        ? null
+        : lastCandidate
 
     result.push({
       id:
@@ -1454,7 +1547,15 @@ export async function getConversationMessages(
     employeeId
   )
 
-  const {
+  const nowIso =
+    new Date().toISOString()
+
+  const cutoffIso =
+    new Date(
+      Date.now() - 14 * 24 * 60 * 60 * 1000
+    ).toISOString()
+
+  let {
     data: rows,
     error,
   } = await supabase
@@ -1474,6 +1575,10 @@ export async function getConversationMessages(
       'deleted_at',
       null
     )
+    .gte(
+      'expires_at',
+      nowIso
+    )
     .order(
       'created_at',
       {
@@ -1481,17 +1586,57 @@ export async function getConversationMessages(
       }
     )
 
+  if (error && error.message?.includes('expires_at')) {
+    const fallback = await supabase
+      .from(
+        'chat_messages'
+      )
+      .select('*')
+      .eq(
+        'company_id',
+        companyId
+      )
+      .eq(
+        'conversation_id',
+        conversationId
+      )
+      .is(
+        'deleted_at',
+        null
+      )
+      .gte(
+        'created_at',
+        cutoffIso
+      )
+      .order(
+        'created_at',
+        {
+          ascending: true,
+        }
+      )
+
+    rows = fallback.data
+    error = fallback.error
+  }
+
   if (error) {
     throw new Error(
       error.message
     )
   }
 
-  const messages =
-    (
-      rows ||
-      []
-    ).map(
+  const nowMs = Date.now()
+  const messages = (rows || [])
+    .filter(row => {
+      if (row.expires_at) {
+        return new Date(row.expires_at).getTime() > nowMs
+      }
+      return (
+        nowMs - new Date(row.created_at).getTime() <
+        14 * 24 * 60 * 60 * 1000
+      )
+    })
+    .map(
       mapMessage
     )
 
@@ -1646,7 +1791,15 @@ export async function sendChatMessage(
       .substring(2, 8)}`
 
   const now =
-    new Date().toISOString()
+    new Date()
+
+  const createdAtIso =
+    now.toISOString()
+
+  const expiresAtIso =
+    new Date(
+      now.getTime() + 14 * 24 * 60 * 60 * 1000
+    ).toISOString()
 
   const {
     error:
@@ -1686,7 +1839,10 @@ export async function sendChatMessage(
         false,
 
       created_at:
-        now,
+        createdAtIso,
+
+      expires_at:
+        expiresAtIso,
     })
 
   if (messageError) {
@@ -1818,7 +1974,10 @@ export async function sendChatMessage(
       'sent',
 
     createdAt:
-      now,
+      createdAtIso,
+
+    expiresAt:
+      expiresAtIso,
   }
 }
 

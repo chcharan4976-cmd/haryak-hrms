@@ -114,6 +114,8 @@ export interface EmployeeStatutoryDetails {
   esi_applicable: boolean;
   esi_number?: string;
   pt_applicable: boolean;
+  pt_state?: string | null;
+  pt_amount?: number | null;
   tax_regime: 'OLD' | 'NEW';
   created_at: Date;
   updated_at: Date;

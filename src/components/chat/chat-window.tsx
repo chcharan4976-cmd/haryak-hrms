@@ -43,6 +43,7 @@ import {
   IdCard,
   Shield,
   Users,
+  Clock,
   X,
 } from 'lucide-react'
 
@@ -1903,6 +1904,14 @@ className={`w-full shrink-0 border-r border-border/70 bg-background/75 backdrop-
                     </div>
                   </header>
 
+                  {/* 14-day message retention policy banner */}
+                  <div className="flex items-center gap-2 border-b border-border/60 bg-muted/30 px-4 py-1.5 text-[11px] text-muted-foreground">
+                    <Clock className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+                    <span>
+                      Chat messages are automatically deleted after 14 days. Official documents, payslips, and HR records are retained separately.
+                    </span>
+                  </div>
+
                   {/* Messages */}
                   <div
                     ref={messagesViewportRef}
@@ -2430,8 +2439,7 @@ className={`w-full shrink-0 border-r border-border/70 bg-background/75 backdrop-
                         </span>
 
                         <span className="hidden sm:inline">
-                          Messages are visible to conversation
-                          participants
+                          14-day auto-deletion policy active • Official HR records retained separately
                         </span>
                       </div>
                     </form>

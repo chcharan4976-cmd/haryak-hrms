@@ -99,9 +99,9 @@ export function DocumentPreviewModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex flex-col h-[94vh] w-[96vw] max-w-[1180px] p-0 overflow-hidden">
         {/* Header Toolbar */}
-        <DialogHeader className="flex flex-row items-center justify-between border-b bg-muted/20 px-5 py-3 shrink-0">
-          <div className="space-y-0.5 min-w-0">
-            <div className="flex items-center gap-2">
+        <DialogHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b bg-muted/20 px-3 sm:px-5 py-3 shrink-0">
+          <div className="space-y-0.5 min-w-0 pr-8 sm:pr-0">
+            <div className="flex flex-wrap items-center gap-2">
               <DialogTitle className="text-sm font-bold truncate">
                 {doc.title || doc.documentNumber}
               </DialogTitle>
@@ -114,9 +114,9 @@ export function DocumentPreviewModal({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             {previewType === 'image' && (
-              <div className="flex items-center border rounded-md bg-background mr-2">
+              <div className="flex items-center border rounded-md bg-background mr-1 sm:mr-2">
                 <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={handleZoomOut} title="Zoom Out">
                   <ZoomOut className="h-3.5 w-3.5" />
                 </Button>
@@ -140,7 +140,8 @@ export function DocumentPreviewModal({
               disabled={downloading}
             >
               <Download className="mr-1.5 h-3.5 w-3.5" />
-              Download {isGeneratedLetter ? 'Official PDF' : 'Original File'}
+              <span className="hidden sm:inline">Download {isGeneratedLetter ? 'Official PDF' : 'Original File'}</span>
+              <span className="sm:hidden">Download</span>
             </Button>
           </div>
         </DialogHeader>

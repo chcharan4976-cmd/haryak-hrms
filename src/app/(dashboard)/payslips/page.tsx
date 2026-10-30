@@ -61,9 +61,9 @@ export default function PayslipsPage() {
 
       {/* Filter Bar */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
+        <CardContent className="p-3 sm:p-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative w-full sm:w-72 md:w-80">
               <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
               <Input
                 placeholder="Search employees or ID..."
@@ -78,7 +78,7 @@ export default function PayslipsPage() {
                 type="month"
                 value={selectedMonth}
                 onChange={(e) => setSelectedMonth(e.target.value)}
-                className="p-1.5 border rounded-md text-xs bg-background h-9 text-foreground"
+                className="p-1.5 border rounded-md text-xs bg-background h-9 text-foreground w-full sm:w-auto"
               />
             </div>
           </div>
@@ -93,7 +93,7 @@ export default function PayslipsPage() {
         </div>
       ) : filteredPayslips.length === 0 ? (
         <Card>
-          <CardContent className="p-8">
+          <CardContent className="p-6 sm:p-8">
             <EmptyState
               icon={FileText}
               title="No finalized payslips available."
@@ -110,47 +110,47 @@ export default function PayslipsPage() {
         </Card>
       ) : (
         <div className="bg-card rounded-xl border overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-muted/50 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full min-w-[760px] text-xs text-left">
+              <thead className="bg-muted/30 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
                 <tr>
-                  <th className="px-4 py-3">Employee</th>
-                  <th className="px-4 py-3">Employee ID</th>
-                  <th className="px-4 py-3">Pay Period</th>
-                  <th className="px-4 py-3">Gross</th>
-                  <th className="px-4 py-3">Deductions</th>
-                  <th className="px-4 py-3">Net</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-3 sm:px-4 py-3 min-w-[180px]">Employee</th>
+                  <th className="px-3 sm:px-4 py-3">Employee ID</th>
+                  <th className="px-3 sm:px-4 py-3">Pay Period</th>
+                  <th className="px-3 sm:px-4 py-3">Gross</th>
+                  <th className="px-3 sm:px-4 py-3">Deductions</th>
+                  <th className="px-3 sm:px-4 py-3">Net</th>
+                  <th className="px-3 sm:px-4 py-3">Status</th>
+                  <th className="px-3 sm:px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {filteredPayslips.map((p) => (
                   <tr key={p.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-3.5">
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5">
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center font-bold text-xs">
+                        <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center font-bold text-xs shrink-0">
                           {p.employee.name.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
                         </div>
-                        <div>
-                          <span className="font-semibold text-foreground block">{p.employee.name}</span>
-                          <span className="text-[11px] text-muted-foreground">{p.employee.email}</span>
+                        <div className="min-w-0">
+                          <span className="font-semibold text-foreground block truncate">{p.employee.name}</span>
+                          <span className="text-[11px] text-muted-foreground truncate block">{p.employee.email}</span>
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3.5 font-mono font-medium text-blue-700 dark:text-blue-400">
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5 font-mono font-medium text-blue-700 dark:text-blue-400">
                       {p.employee.code}
                     </td>
-                    <td className="px-4 py-3.5 font-medium">{monthName}</td>
-                    <td className="px-4 py-3.5">{formatCurrency(p.gross_pay)}</td>
-                    <td className="px-4 py-3.5 text-destructive">{formatCurrency(p.total_deductions)}</td>
-                    <td className="px-4 py-3.5 font-bold text-emerald-600">{formatCurrency(p.net_pay)}</td>
-                    <td className="px-4 py-3.5">
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5 font-medium">{monthName}</td>
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5">{formatCurrency(p.gross_pay)}</td>
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5 text-destructive">{formatCurrency(p.total_deductions)}</td>
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5 font-bold text-emerald-600">{formatCurrency(p.net_pay)}</td>
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5">
                       <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-200 text-[10px]">
                         {p.status || 'Published'}
                       </Badge>
                     </td>
-                    <td className="px-4 py-3.5 text-right">
+                    <td className="px-3 sm:px-4 py-3 sm:py-3.5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <Link href={`/payslips/${p.employee.code || p.employee.id}/print`}>
                           <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-700 hover:text-blue-900">

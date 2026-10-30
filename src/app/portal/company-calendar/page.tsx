@@ -120,7 +120,7 @@ function typeLabel(
     type
   ) {
     case 'company':
-      return 'Company Holiday'
+      return 'Paid Company Holiday'
 
     case 'optional':
       return 'Optional Holiday'
@@ -129,7 +129,7 @@ function typeLabel(
       return 'Restricted Holiday'
 
     default:
-      return 'Public Holiday'
+      return 'Paid Public Holiday'
   }
 }
 
@@ -404,19 +404,19 @@ export default function CompanyCalendarPage() {
           HEADER
           ===================================================== */}
 
-      <div className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <div className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-[#1e2a78] dark:bg-blue-950/40 dark:text-blue-300">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-[#1e2a78] dark:bg-blue-950/40 dark:text-blue-300">
               <CalendarIcon className="h-5 w-5" />
             </div>
 
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            <div className="min-w-0">
+              <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground truncate">
                 Company Calendar
               </h1>
 
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1 text-xs sm:text-sm text-muted-foreground">
                 View the official company holiday calendar published by HR.
               </p>
             </div>
@@ -425,7 +425,7 @@ export default function CompanyCalendarPage() {
 
         <Badge
           variant="outline"
-          className="w-fit border-blue-200 bg-blue-50 px-3 py-1 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300"
+          className="w-fit border-blue-200 bg-blue-50 px-3 py-1 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 shrink-0"
         >
           <Sparkles className="mr-1 h-3.5 w-3.5" />
 
@@ -437,7 +437,7 @@ export default function CompanyCalendarPage() {
           YEAR + SUMMARY
           ===================================================== */}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-3">
         <Card>
           <CardContent className="p-4">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -698,10 +698,10 @@ export default function CompanyCalendarPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-xl border">
-              <table className="min-w-full text-sm">
+            <div className="relative w-full overflow-x-auto rounded-xl border">
+              <table className="w-full min-w-[500px] text-xs sm:text-sm">
                 <thead>
-                  <tr className="border-b bg-muted/40">
+                  <tr className="border-b bg-muted/30">
                     <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                       Date
                     </th>

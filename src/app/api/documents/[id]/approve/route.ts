@@ -40,7 +40,11 @@ export async function POST(
 
   await supabase
     .from('documents')
-    .update({ description: JSON.stringify(meta), updated_at: new Date().toISOString() })
+    .update({
+      status: 'APPROVED',
+      description: JSON.stringify(meta),
+      updated_at: new Date().toISOString(),
+    })
     .eq('id', id)
 
   await createAuditLog({

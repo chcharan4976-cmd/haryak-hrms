@@ -20,7 +20,7 @@ export default function MyAttendancePage() {
   const [logs, setLogs] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [checkingIn, setCheckingIn] = useState(false)
-  const [summary, setSummary] = useState({ present: 0, wfh: 0, leave: 0, absent: 0 })
+  const [summary, setSummary] = useState({ present: 0, wfh: 0, paidLeave: 0, lop: 0, absent: 0, pending: 0 })
 
   const currentMonth = new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
 
@@ -33,12 +33,15 @@ export default function MyAttendancePage() {
         setLogs(data.attendance || [])
         
         // Calculate summary
-        const sum = { present: 0, wfh: 0, leave: 0, absent: 0 }
+        const sum = { present: 0, wfh: 0, paidLeave: 0, lop: 0, absent: 0, pending: 0 }
         data.attendance?.forEach((log: any) => {
-          if (log.status === 'PRESENT') sum.present++
-          else if (log.status === 'WFH') sum.wfh++
-          else if (log.status === 'LEAVE') sum.leave++
-          else if (log.status === 'ABSENT') sum.absent++
+          const s = String(log.status || '').toUpperCase()
+          if (s === 'PRESENT') sum.present++
+          else if (s === 'WFH') sum.wfh++
+          else if (s === 'PAID_LEAVE' || s === 'PAID LEAVE' || s === 'LEAVE') sum.paidLeave++
+          else if (s === 'UNPAID_LEAVE' || s === 'UNPAID LEAVE / LOP' || s === 'LOP') sum.lop++
+          else if (s === 'PENDING_TIMESHEET' || s === 'PENDING TIMESHEET') sum.pending++
+          else if (s === 'ABSENT' || s === 'MISSING_ATTENDANCE' || s === 'MISSING ATTENDANCE') sum.absent++
         })
         setSummary(sum)
       }
@@ -74,13 +77,32 @@ export default function MyAttendancePage() {
   }
 
   const getStatusBadge = (status: string) => {
-    switch(status) {
-      case 'PRESENT': return <Badge className="bg-emerald-100 text-emerald-800 text-[10px]"><CheckCircle2 className="w-3 h-3 mr-1"/> Present</Badge>
-      case 'ABSENT': return <Badge className="bg-red-100 text-red-800 text-[10px]"><XCircle className="w-3 h-3 mr-1"/> Absent</Badge>
-      case 'LEAVE': return <Badge className="bg-blue-100 text-blue-800 text-[10px]"><CalendarOff className="w-3 h-3 mr-1"/> Leave</Badge>
-      case 'WFH': return <Badge className="bg-purple-100 text-purple-800 text-[10px]"><Briefcase className="w-3 h-3 mr-1"/> WFH</Badge>
-      default: return <Badge variant="secondary">{status || 'Unknown'}</Badge>
+    const s = String(status || '').toUpperCase()
+    if (s === 'PRESENT') {
+      return <Badge className="bg-emerald-100 text-emerald-800 text-[10px]"><CheckCircle2 className="w-3 h-3 mr-1"/> Present</Badge>
     }
+    if (s === 'PAID_LEAVE' || s === 'PAID LEAVE' || s === 'LEAVE') {
+      return <Badge className="bg-blue-100 text-blue-800 text-[10px]"><CalendarOff className="w-3 h-3 mr-1"/> Paid Leave</Badge>
+    }
+    if (s === 'UNPAID_LEAVE' || s === 'UNPAID LEAVE / LOP' || s === 'LOP') {
+      return <Badge className="bg-orange-100 text-orange-800 text-[10px]"><CalendarOff className="w-3 h-3 mr-1"/> LOP / Unpaid</Badge>
+    }
+    if (s === 'PUBLIC_HOLIDAY' || s === 'PUBLIC HOLIDAY') {
+      return <Badge className="bg-purple-100 text-purple-800 text-[10px]">Public Holiday</Badge>
+    }
+    if (s === 'WEEKLY_OFF' || s === 'WEEKLY OFF') {
+      return <Badge className="bg-slate-100 text-slate-800 text-[10px]">Weekly Off</Badge>
+    }
+    if (s === 'PENDING_TIMESHEET' || s === 'PENDING TIMESHEET') {
+      return <Badge className="bg-amber-100 text-amber-800 text-[10px]"><Clock className="w-3 h-3 mr-1"/> Pending Timesheet</Badge>
+    }
+    if (s === 'WFH') {
+      return <Badge className="bg-purple-100 text-purple-800 text-[10px]"><Briefcase className="w-3 h-3 mr-1"/> WFH</Badge>
+    }
+    if (s === 'ABSENT' || s === 'MISSING_ATTENDANCE' || s === 'MISSING ATTENDANCE') {
+      return <Badge className="bg-red-100 text-red-800 text-[10px]"><XCircle className="w-3 h-3 mr-1"/> Absent / Missing</Badge>
+    }
+    return <Badge variant="secondary">{status || 'Not Marked'}</Badge>
   }
 
   // Find if checked in today
@@ -90,17 +112,17 @@ export default function MyAttendancePage() {
   const isCheckedOut = !!todayLog?.check_out_time
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
+    <div className="space-y-6 w-full max-w-5xl mx-auto">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">My Attendance & Punch Logs</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">My Attendance & Punch Logs</h1>
           <p className="text-xs text-muted-foreground mt-1">Biometric time log summary for {currentMonth}.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 w-full sm:w-auto">
           {!isCheckedIn ? (
             <Button 
               size="sm" 
-              className="bg-[#1e2a78] text-white text-xs" 
+              className="h-9 w-full sm:w-auto bg-[#1e2a78] text-white text-xs" 
               onClick={() => handleWebCheck('in')}
               disabled={checkingIn}
             >
@@ -111,7 +133,7 @@ export default function MyAttendancePage() {
             <Button 
               size="sm" 
               variant="destructive"
-              className="text-xs" 
+              className="h-9 w-full sm:w-auto text-xs" 
               onClick={() => handleWebCheck('out')}
               disabled={checkingIn}
             >
@@ -119,48 +141,48 @@ export default function MyAttendancePage() {
               Web Check-Out
             </Button>
           ) : (
-            <Button size="sm" variant="outline" disabled className="text-xs">
+            <Button size="sm" variant="outline" disabled className="h-9 w-full sm:w-auto text-xs">
               <CheckCircle2 className="w-4 h-4 mr-2 text-emerald-600" /> Day Completed
             </Button>
           )}
         </div>
       </div>
 
-      <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-        <Card className="p-4 shadow-xs border text-center">
-          <span className="text-[11px] text-muted-foreground block">Present Days</span>
-          <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 block">{summary.present}</span>
+      <div className="grid gap-2.5 sm:gap-3 grid-cols-2 sm:grid-cols-4">
+        <Card className="p-3 sm:p-4 shadow-xs border text-center">
+          <span className="text-[11px] text-muted-foreground block truncate">Present Days</span>
+          <span className="text-lg sm:text-xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 block">{summary.present}</span>
         </Card>
-        <Card className="p-4 shadow-xs border text-center">
-          <span className="text-[11px] text-muted-foreground block">WFH Days</span>
-          <span className="text-xl font-bold text-purple-600 dark:text-purple-400 mt-1 block">{summary.wfh}</span>
+        <Card className="p-3 sm:p-4 shadow-xs border text-center">
+          <span className="text-[11px] text-muted-foreground block truncate">Paid Leave</span>
+          <span className="text-lg sm:text-xl font-bold text-blue-600 dark:text-blue-400 mt-1 block">{summary.paidLeave}</span>
         </Card>
-        <Card className="p-4 shadow-xs border text-center">
-          <span className="text-[11px] text-muted-foreground block">Leave Taken</span>
-          <span className="text-xl font-bold text-blue-600 dark:text-blue-400 mt-1 block">{summary.leave}</span>
+        <Card className="p-3 sm:p-4 shadow-xs border text-center">
+          <span className="text-[11px] text-muted-foreground block truncate">Loss of Pay (LOP)</span>
+          <span className="text-lg sm:text-xl font-bold text-orange-600 dark:text-orange-400 mt-1 block">{summary.lop}</span>
         </Card>
-        <Card className="p-4 shadow-xs border text-center">
-          <span className="text-[11px] text-muted-foreground block">Loss of Pay (LOP)</span>
-          <span className="text-xl font-bold text-muted-foreground mt-1 block">{summary.absent}</span>
+        <Card className="p-3 sm:p-4 shadow-xs border text-center">
+          <span className="text-[11px] text-muted-foreground block truncate">Missing / Absent</span>
+          <span className="text-lg sm:text-xl font-bold text-destructive mt-1 block">{summary.absent}</span>
         </Card>
       </div>
 
-      <Card className="shadow-xs border">
-        <CardHeader className="pb-3 border-b bg-muted/20">
+      <Card className="shadow-xs border overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-3 border-b bg-muted/20">
           <CardTitle className="text-sm font-bold">Punch In / Punch Out Activity</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
              <div className="flex justify-center items-center py-12">
-               <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+               <Loader2 className="w-8 h-8 animate-spin text-[#1e2a78]" />
              </div>
           ) : logs.length === 0 ? (
             <div className="text-center py-12 text-sm text-muted-foreground">
               No attendance logs found.
             </div>
           ) : (
-            <Table className="text-xs">
-              <TableHeader className="bg-muted/50 text-[10px]">
+            <Table className="min-w-[580px] text-xs">
+              <TableHeader className="bg-muted/30 text-[10px] uppercase tracking-wider">
                 <TableRow>
                   <TableHead>Date</TableHead>
                   <TableHead>Day</TableHead>

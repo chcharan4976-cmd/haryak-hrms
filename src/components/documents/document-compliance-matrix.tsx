@@ -13,6 +13,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   ShieldCheck,
   AlertCircle,
   CheckCircle2,
@@ -198,39 +205,43 @@ export function DocumentComplianceMatrix({
               </CardDescription>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
               <div className="relative w-full sm:w-56">
                 <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
                 <Input
                   placeholder="Search code or name..."
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
-                  className="h-8 pl-8 text-xs"
+                  className="h-8 pl-8 text-xs w-full"
                 />
               </div>
 
               {departments.length > 0 && (
-                <select
+                <Select
                   value={departmentFilter}
-                  onChange={e => setDepartmentFilter(e.target.value)}
-                  className="h-8 rounded-md border bg-background px-2.5 text-xs"
+                  onValueChange={val => setDepartmentFilter(val)}
                 >
-                  <option value="ALL">All Departments</option>
-                  {departments.map(d => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger className="h-8 w-full sm:w-auto min-w-[130px] text-xs">
+                    <SelectValue placeholder="All Departments" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">All Departments</SelectItem>
+                    {departments.map(d => (
+                      <SelectItem key={d} value={d}>
+                        {d}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </div>
           </div>
         </CardHeader>
 
         <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b bg-muted/40 font-semibold text-muted-foreground">
+          <div className="overflow-x-auto max-w-full">
+            <table className="w-full text-left text-xs min-w-[780px]">
+              <thead className="border-b bg-muted/30 font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
                 <tr>
                   <th className="p-3 pl-5">Employee</th>
                   <th className="p-3">Department</th>

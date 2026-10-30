@@ -13,6 +13,7 @@ import {
   FileText,
   Plus,
   Save,
+  Send,
   Signature,
   Trash2,
 } from 'lucide-react'
@@ -95,6 +96,10 @@ interface DocumentEditorProps {
   ) => void
 
   onSave?: (
+    value: EditableDocumentContent
+  ) => Promise<void> | void
+
+  onSaveAndIssue?: (
     value: EditableDocumentContent
   ) => Promise<void> | void
 
@@ -216,6 +221,7 @@ export function DocumentEditor({
   value,
   onChange,
   onSave,
+  onSaveAndIssue,
   saving = false,
   readOnly = false,
 }: DocumentEditorProps) {
@@ -793,6 +799,21 @@ export function DocumentEditor({
         draft
       )
     }
+
+  const handleSaveAndIssue =
+    async () => {
+      if (
+        !canSave ||
+        !onSaveAndIssue
+      ) {
+        return
+      }
+
+      await onSaveAndIssue(
+        draft
+      )
+    }
+
 
   /* ==========================================================
      RENDER
@@ -1577,28 +1598,34 @@ export function DocumentEditor({
           SAVE
           ===================================================== */}
 
-      {!readOnly &&
-        onSave && (
-          <div className="sticky bottom-0 z-10 flex justify-end border-t bg-background/95 py-4 backdrop-blur">
+      {!readOnly && (onSave || onSaveAndIssue) && (
+        <div className="sticky bottom-0 z-10 flex flex-col sm:flex-row justify-end items-center gap-2 border-t bg-background/95 py-3 sm:py-4 px-2 sm:px-0 backdrop-blur">
+          {onSave && (
             <Button
               type="button"
-              disabled={
-                !canSave ||
-                saving
-              }
-              onClick={() =>
-                void handleSave()
-              }
-              className="bg-[#1e2a78] text-white hover:bg-[#152060]"
+              variant="outline"
+              disabled={!canSave || saving}
+              onClick={() => void handleSave()}
+              className="w-full sm:w-auto text-xs"
             >
-              <Save className="mr-2 h-4 w-4" />
-
-              {saving
-                ? 'Saving...'
-                : 'Save Draft Changes'}
+              <Save className="mr-2 h-3.5 w-3.5" />
+              {saving ? 'Saving...' : 'Save Draft Changes'}
             </Button>
-          </div>
-        )}
+          )}
+
+          {onSaveAndIssue && (
+            <Button
+              type="button"
+              disabled={!canSave || saving}
+              onClick={() => void handleSaveAndIssue()}
+              className="w-full sm:w-auto bg-emerald-600 text-white hover:bg-emerald-700 text-xs shadow-sm"
+            >
+              <Send className="mr-2 h-3.5 w-3.5" />
+              {saving ? 'Processing...' : 'Save & Issue to Employee Portal'}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   )
-}
+}

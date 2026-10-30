@@ -211,7 +211,7 @@ export async function GET(
     )
   }
 
-  const {
+  let {
     data: statutoryDetails,
     error: statutoryError,
   } = await supabase
@@ -236,6 +236,37 @@ export async function GET(
       employeeId
     )
     .maybeSingle()
+
+  if (
+    statutoryError &&
+    (statutoryError.message?.includes('pt_amount') ||
+      statutoryError.code === '42703' ||
+      statutoryError.code === 'PGRST204')
+  ) {
+    const fallbackRes = await supabase
+      .from('employee_statutory_details')
+      .select(`
+        pf_applicable,
+        uan_number,
+        pf_number,
+        pf_joining_date,
+        esi_applicable,
+        esi_number,
+        pt_applicable,
+        pt_state,
+        tax_regime,
+        pan_masked
+      `)
+      .eq('employee_id', employeeId)
+      .maybeSingle()
+
+    if (!fallbackRes.error) {
+      statutoryDetails = fallbackRes.data
+        ? { ...fallbackRes.data, pt_amount: null }
+        : null
+      statutoryError = null
+    }
+  }
 
   if (statutoryError) {
     return NextResponse.json(
@@ -1506,99 +1537,78 @@ export async function POST(
         : null,
   }
 
+  let statutoryError: any = null
+
   if (existingStatutory) {
-    const {
-      error: statutoryError,
-    } = await supabase
-      .from(
-        'employee_statutory_details'
-      )
-      .update(
-        statutoryPayload
-      )
-      .eq(
-        'id',
-        existingStatutory.id
-      )
+    const res = await supabase
+      .from('employee_statutory_details')
+      .update(statutoryPayload)
+      .eq('id', existingStatutory.id)
+    statutoryError = res.error
 
-    if (statutoryError) {
-      await supabase
-        .from(
-          'salary_structures'
-        )
-        .delete()
-        .eq(
-          'id',
-          newStructure.id
-        )
-
-      await supabase
-        .from(
-          'salary_revisions'
-        )
-        .delete()
-        .eq(
-          'id',
-          revision.id
-        )
-
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            statutoryError.message,
-        },
-        {
-          status: 500,
-        }
-      )
+    if (
+      statutoryError &&
+      (statutoryError.message?.includes('pt_amount') ||
+        statutoryError.code === '42703' ||
+        statutoryError.code === 'PGRST204')
+    ) {
+      console.warn('Retrying statutory update without pt_amount:', statutoryError.message)
+      const fallbackPayload = { ...statutoryPayload }
+      delete (fallbackPayload as any).pt_amount
+      const fallbackRes = await supabase
+        .from('employee_statutory_details')
+        .update(fallbackPayload)
+        .eq('id', existingStatutory.id)
+      statutoryError = fallbackRes.error
     }
   } else {
-    const {
-      error: statutoryError,
-    } = await supabase
-      .from(
-        'employee_statutory_details'
-      )
+    const res = await supabase
+      .from('employee_statutory_details')
       .insert({
-        employee_id:
-          employeeId,
-
+        employee_id: employeeId,
         ...statutoryPayload,
       })
+    statutoryError = res.error
 
-    if (statutoryError) {
-      await supabase
-        .from(
-          'salary_structures'
-        )
-        .delete()
-        .eq(
-          'id',
-          newStructure.id
-        )
-
-      await supabase
-        .from(
-          'salary_revisions'
-        )
-        .delete()
-        .eq(
-          'id',
-          revision.id
-        )
-
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            statutoryError.message,
-        },
-        {
-          status: 500,
-        }
-      )
+    if (
+      statutoryError &&
+      (statutoryError.message?.includes('pt_amount') ||
+        statutoryError.code === '42703' ||
+        statutoryError.code === 'PGRST204')
+    ) {
+      console.warn('Retrying statutory insert without pt_amount:', statutoryError.message)
+      const fallbackPayload: Record<string, any> = {
+        employee_id: employeeId,
+        ...statutoryPayload,
+      }
+      delete fallbackPayload.pt_amount
+      const fallbackRes = await supabase
+        .from('employee_statutory_details')
+        .insert(fallbackPayload)
+      statutoryError = fallbackRes.error
     }
+  }
+
+  if (statutoryError) {
+    await supabase
+      .from('salary_structures')
+      .delete()
+      .eq('id', newStructure.id)
+
+    await supabase
+      .from('salary_revisions')
+      .delete()
+      .eq('id', revision.id)
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: statutoryError.message,
+      },
+      {
+        status: 500,
+      }
+    )
   }
 
   /* -------------------------------------------------------

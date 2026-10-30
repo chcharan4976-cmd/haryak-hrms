@@ -147,7 +147,7 @@ export function PayslipTemplate({ data }: { data: PayslipData }) {
         </div>
 
         {/* Employee Details | Payroll Details */}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 print:grid-cols-2">
           <div>
             <SectionHeader>EMPLOYEE DETAILS</SectionHeader>
             <DetailTable>
@@ -174,66 +174,68 @@ export function PayslipTemplate({ data }: { data: PayslipData }) {
         {/* Monthly Pay Breakdown */}
         <div>
           <SectionHeader>MONTHLY PAY BREAKDOWN</SectionHeader>
-          <table className="w-full border-collapse text-xs">
-            <thead>
-              <tr style={{ backgroundColor: '#1e2a78', color: 'white' }}>
-                <th className="text-left px-3 py-2 font-semibold">EARNINGS</th>
-                <th className="text-right px-3 py-2 font-semibold">AMOUNT (INR)</th>
-                <th className="text-left px-3 py-2 font-semibold border-l border-blue-400">DEDUCTIONS</th>
-                <th className="text-right px-3 py-2 font-semibold">AMOUNT (INR)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {Array.from({ length: maxRows }).map((_, i) => {
-                const earning = earningRows[i]
-                const deduction = deductionRows[i]
-                return (
-                  <tr key={i} className="border-b border-gray-200">
-                    <td className="px-3 py-1.5 text-gray-700">
-                      {earning?.name || ''}
-                    </td>
-                    <td className="px-3 py-1.5 text-right text-gray-900 font-medium">
-                      {earning != null ? (earning.amount > 0 ? earning.amount.toLocaleString('en-IN') : '0') : ''}
-                    </td>
-                    <td className="px-3 py-1.5 text-gray-700 border-l border-gray-200">
-                      {deduction?.name || ''}
-                    </td>
-                    <td className="px-3 py-1.5 text-right text-gray-900 font-medium">
-                      {deduction != null ? (
-                        <>
-                          {deduction.amount > 0 ? deduction.amount.toLocaleString('en-IN') : '0'}
-                          {deduction.noteSymbol && (
-                            <sup className="text-xs text-red-500">{deduction.noteSymbol}</sup>
-                          )}
-                        </>
-                      ) : ''}
-                    </td>
-                  </tr>
-                )
-              })}
-              {/* Totals Row */}
-              <tr
-                className="font-bold"
-                style={{ backgroundColor: '#EEF0FF', borderTop: '2px solid #1e2a78' }}
-              >
-                <td className="px-3 py-2 text-gray-900">TOTAL GROSS EARNINGS</td>
-                <td className="px-3 py-2 text-right text-gray-900">
-                  {data.grossEarnings.toLocaleString('en-IN')}
-                </td>
-                <td className="px-3 py-2 text-gray-900 border-l border-gray-300">
-                  TOTAL DEDUCTIONS
-                </td>
-                <td className="px-3 py-2 text-right text-gray-900">
-                  {data.totalDeductions.toLocaleString('en-IN')}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <div className="overflow-x-auto w-full">
+            <table className="w-full min-w-[480px] border-collapse text-xs">
+              <thead>
+                <tr style={{ backgroundColor: '#1e2a78', color: 'white' }}>
+                  <th className="text-left px-3 py-2 font-semibold">EARNINGS</th>
+                  <th className="text-right px-3 py-2 font-semibold">AMOUNT (INR)</th>
+                  <th className="text-left px-3 py-2 font-semibold border-l border-blue-400">DEDUCTIONS</th>
+                  <th className="text-right px-3 py-2 font-semibold">AMOUNT (INR)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: maxRows }).map((_, i) => {
+                  const earning = earningRows[i]
+                  const deduction = deductionRows[i]
+                  return (
+                    <tr key={i} className="border-b border-gray-200">
+                      <td className="px-3 py-1.5 text-gray-700">
+                        {earning?.name || ''}
+                      </td>
+                      <td className="px-3 py-1.5 text-right text-gray-900 font-medium">
+                        {earning != null ? (earning.amount > 0 ? earning.amount.toLocaleString('en-IN') : '0') : ''}
+                      </td>
+                      <td className="px-3 py-1.5 text-gray-700 border-l border-gray-200">
+                        {deduction?.name || ''}
+                      </td>
+                      <td className="px-3 py-1.5 text-right text-gray-900 font-medium">
+                        {deduction != null ? (
+                          <>
+                            {deduction.amount > 0 ? deduction.amount.toLocaleString('en-IN') : '0'}
+                            {deduction.noteSymbol && (
+                              <sup className="text-xs text-red-500">{deduction.noteSymbol}</sup>
+                            )}
+                          </>
+                        ) : ''}
+                      </td>
+                    </tr>
+                  )
+                })}
+                {/* Totals Row */}
+                <tr
+                  className="font-bold"
+                  style={{ backgroundColor: '#EEF0FF', borderTop: '2px solid #1e2a78' }}
+                >
+                  <td className="px-3 py-2 text-gray-900">TOTAL GROSS EARNINGS</td>
+                  <td className="px-3 py-2 text-right text-gray-900">
+                    {data.grossEarnings.toLocaleString('en-IN')}
+                  </td>
+                  <td className="px-3 py-2 text-gray-900 border-l border-gray-300">
+                    TOTAL DEDUCTIONS
+                  </td>
+                  <td className="px-3 py-2 text-right text-gray-900">
+                    {data.totalDeductions.toLocaleString('en-IN')}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {/* Net Salary Payable */}
         <div
-          className="border-2 rounded-md px-4 py-3 flex justify-between items-center"
+          className="border-2 rounded-md px-4 py-3 flex flex-col sm:flex-row justify-between sm:items-center gap-2 print:flex-row print:items-center"
           style={{ borderColor: '#1e2a78', backgroundColor: '#F0F1FF' }}
         >
           <div>
@@ -255,7 +257,7 @@ export function PayslipTemplate({ data }: { data: PayslipData }) {
         {/* Payroll & Tax Information */}
         <div>
           <SectionHeader>PAYROLL & TAX INFORMATION</SectionHeader>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 text-xs print:grid-cols-2">
             <div className="flex justify-between border-b border-gray-100 py-1">
               <span className="text-gray-600">Annual CTC</span>
               <span className="font-medium">{formatINR(data.annualCTC)}</span>
@@ -286,7 +288,7 @@ export function PayslipTemplate({ data }: { data: PayslipData }) {
         {/* Statutory & Bank Details */}
         <div>
           <SectionHeader>STATUTORY & BANK DETAILS</SectionHeader>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-xs">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-1 text-xs print:grid-cols-2">
             <div className="flex justify-between border-b border-gray-100 py-1">
               <span className="text-gray-600">PAN</span>
               <span className="font-medium font-mono">{maskedPAN}</span>

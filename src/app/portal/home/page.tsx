@@ -68,22 +68,22 @@ export default function EmployeeHomePage() {
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-[#1e2a78] to-[#121c52] p-6 rounded-xl text-white shadow-xs">
-        <div className="text-xs font-semibold text-blue-200 uppercase tracking-wider mb-1">
+      <div className="bg-gradient-to-r from-[#1e2a78] to-[#121c52] p-4 sm:p-6 rounded-xl text-white shadow-xs">
+        <div className="text-[11px] sm:text-xs font-semibold text-blue-200 uppercase tracking-wider mb-1">
           Haryak Technologies • Employee Self-Service
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">{greeting}, {empName}!</h1>
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight">{greeting}, {empName}!</h1>
         <p className="text-xs text-blue-100/80 mt-1">{currentDate} • Employee Portal</p>
       </div>
 
       {error && (
-        <div className="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg flex items-center justify-between">
-          <div className="text-xs text-red-700 dark:text-red-400">
+        <div className="p-3 sm:p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg flex items-center justify-between gap-3">
+          <div className="text-xs text-red-700 dark:text-red-400 break-words min-w-0">
             {error}
           </div>
           <button 
             onClick={fetchDashboardData}
-            className="px-3 py-1 bg-background text-xs border rounded-md font-medium hover:bg-muted"
+            className="px-3 py-1 bg-background text-xs border rounded-md font-medium hover:bg-muted shrink-0"
           >
             Retry
           </button>
@@ -97,15 +97,15 @@ export default function EmployeeHomePage() {
       ) : (
         <>
           {/* Quick Stats Row */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Card className="shadow-xs border">
-              <CardContent className="p-5 flex items-center space-x-3.5">
-                <div className="p-2.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 rounded-xl">
+              <CardContent className="p-4 sm:p-5 flex items-center gap-3.5">
+                <div className="p-2.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 rounded-xl shrink-0">
                   {attendance?.status === 'PRESENT' ? <CheckCircle2 className="h-5 w-5" /> : <XCircle className="h-5 w-5" />}
                 </div>
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Attendance Status</p>
-                  <h3 className={`text-base font-bold ${attendance?.status === 'PRESENT' ? 'text-emerald-700 dark:text-emerald-400' : 'text-foreground'}`}>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground truncate">Attendance Status</p>
+                  <h3 className={`text-base font-bold truncate ${attendance?.status === 'PRESENT' ? 'text-emerald-700 dark:text-emerald-400' : 'text-foreground'}`}>
                     {attendance ? attendance.status : 'Not Marked'}
                   </h3>
                 </div>
@@ -113,13 +113,13 @@ export default function EmployeeHomePage() {
             </Card>
 
             <Card className="shadow-xs border">
-              <CardContent className="p-5 flex items-center space-x-3.5">
-                <div className="p-2.5 bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 rounded-xl">
+              <CardContent className="p-4 sm:p-5 flex items-center gap-3.5">
+                <div className="p-2.5 bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 rounded-xl shrink-0">
                   <CalendarOff className="h-5 w-5" />
                 </div>
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Available Leaves</p>
-                  <h3 className="text-base font-bold text-foreground">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground truncate">Available Leaves</p>
+                  <h3 className="text-base font-bold text-foreground truncate">
                     {leaveBalances && leaveBalances.length > 0 ? `${totalAvailableLeaves} Days` : 'No Balance'}
                   </h3>
                 </div>
@@ -127,13 +127,13 @@ export default function EmployeeHomePage() {
             </Card>
 
             <Card className="shadow-xs border">
-              <CardContent className="p-5 flex items-center space-x-3.5">
-                <div className="p-2.5 bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 rounded-xl">
+              <CardContent className="p-4 sm:p-5 flex items-center gap-3.5">
+                <div className="p-2.5 bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 rounded-xl shrink-0">
                   <FileText className="h-5 w-5" />
                 </div>
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Latest Payslip</p>
-                  <h3 className="text-base font-bold text-foreground truncate max-w-[120px]" title={latestPayslip?.period || 'None'}>
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground truncate">Latest Payslip</p>
+                  <h3 className="text-base font-bold text-foreground truncate" title={latestPayslip?.period || 'None'}>
                     {latestPayslip ? latestPayslip.period : 'Not Available'}
                   </h3>
                 </div>
@@ -141,13 +141,13 @@ export default function EmployeeHomePage() {
             </Card>
 
             <Card className="shadow-xs border">
-              <CardContent className="p-5 flex items-center space-x-3.5">
-                <div className="p-2.5 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-xl">
+              <CardContent className="p-4 sm:p-5 flex items-center gap-3.5">
+                <div className="p-2.5 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 rounded-xl shrink-0">
                   <Clock className="h-5 w-5" />
                 </div>
-                <div>
-                  <p className="text-xs font-medium text-muted-foreground">Shift Hours</p>
-                  <h3 className="text-base font-bold text-foreground">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground truncate">Shift Hours</p>
+                  <h3 className="text-base font-bold text-foreground truncate">
                     {attendance?.shift?.start_time ? `${attendance.shift.start_time} - ${attendance.shift.end_time}` : 'Standard'}
                   </h3>
                 </div>
@@ -156,10 +156,10 @@ export default function EmployeeHomePage() {
           </div>
 
           {/* Quick Launchpad Navigation */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-3 sm:gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Link href="/portal/my-payslips">
               <Card className="hover:shadow-sm hover:border-blue-300 transition-all cursor-pointer h-full">
-                <CardContent className="p-5 space-y-2">
+                <CardContent className="p-4 sm:p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <FileText className="w-5 h-5 text-blue-600" />
                     <ArrowRight className="w-4 h-4 text-muted-foreground" />
@@ -172,7 +172,7 @@ export default function EmployeeHomePage() {
 
             <Link href="/portal/my-leaves">
               <Card className="hover:shadow-sm hover:border-blue-300 transition-all cursor-pointer h-full">
-                <CardContent className="p-5 space-y-2">
+                <CardContent className="p-4 sm:p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <CalendarOff className="w-5 h-5 text-emerald-600" />
                     <ArrowRight className="w-4 h-4 text-muted-foreground" />
@@ -185,7 +185,7 @@ export default function EmployeeHomePage() {
 
             <Link href="/portal/my-profile">
               <Card className="hover:shadow-sm hover:border-blue-300 transition-all cursor-pointer h-full">
-                <CardContent className="p-5 space-y-2">
+                <CardContent className="p-4 sm:p-5 space-y-2">
                   <div className="flex items-center justify-between">
                     <User className="w-5 h-5 text-purple-600" />
                     <ArrowRight className="w-4 h-4 text-muted-foreground" />

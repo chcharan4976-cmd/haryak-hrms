@@ -100,57 +100,87 @@ export default function DashboardPage() {
 
   const [stats, setStats] = useState<DashboardStats>(initialStats)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const fetchStats = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/dashboard/stats')
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          setError('Your session has expired. Please log in again to refresh statistics.')
+        } else if (response.status === 403) {
+          setError('Access denied: Administrator privileges are required to view statistics.')
+        } else {
+          setError('Unable to load latest dashboard statistics. Displaying baseline numbers.')
+        }
+        return
+      }
+
+      const data = await response.json()
+
+      if (data.success && data.stats) {
+        setStats((previous) => ({
+          ...previous,
+          ...data.stats,
+          departments: Array.isArray(data.stats.departments)
+            ? data.stats.departments
+            : [],
+          recentActivity: Array.isArray(data.stats.recentActivity)
+            ? data.stats.recentActivity
+            : [],
+        }))
+        setError(null)
+      } else {
+        setError(data.error || 'Failed to load dashboard statistics.')
+      }
+    } catch (err) {
+      console.error('Error loading dashboard stats:', err)
+      setError('Network communication error while loading dashboard statistics.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    const fetchStats = async () => {
-      try {
-        const response = await fetch('/api/dashboard/stats')
-
-        if (!response.ok) {
-          throw new Error(
-            `Dashboard stats request failed with status ${response.status}`
-          )
-        }
-
-        const data = await response.json()
-
-        if (data.success && data.stats) {
-          setStats((previous) => ({
-            ...previous,
-            ...data.stats,
-            departments: Array.isArray(data.stats.departments)
-              ? data.stats.departments
-              : [],
-            recentActivity: Array.isArray(data.stats.recentActivity)
-              ? data.stats.recentActivity
-              : [],
-          }))
-        }
-      } catch (error) {
-        console.error('Error loading dashboard stats:', error)
-      } finally {
-        setLoading(false)
-      }
-    }
-
     void fetchStats()
   }, [])
 
   return (
     <div className="space-y-6">
+      {/* User-friendly Error Alert with Retry Action */}
+      {error && (
+        <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 shadow-sm sm:flex-row sm:items-center sm:justify-between dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200">
+          <div className="flex items-center gap-2">
+            <Activity className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>{error}</span>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void fetchStats()}
+            className="h-8 shrink-0 border-amber-300 bg-white text-amber-900 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200 dark:hover:bg-amber-900/50"
+          >
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Executive Welcome Header */}
-      <div className="flex flex-col gap-4 rounded-xl bg-gradient-to-r from-[#1e2a78] to-[#121c52] p-6 text-white shadow-sm md:flex-row md:items-center md:justify-between">
-        <div>
+      <div className="flex flex-col gap-4 rounded-xl bg-gradient-to-r from-[#1e2a78] to-[#121c52] p-4 sm:p-6 text-white shadow-sm md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0">
           <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-semibold text-blue-200 backdrop-blur-sm">
-            <ShieldCheck className="h-3.5 w-3.5" />
-            Executive Administration Hub
+            <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+            <span>Executive Administration Hub</span>
           </div>
 
-          <h1 className="text-2xl font-bold tracking-tight">
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight break-words">
             {greeting}, {adminName}
           </h1>
 
-          <p className="mt-1 text-xs text-blue-100/80 sm:text-sm">
+          <p className="mt-1 text-xs text-blue-100/80 sm:text-sm break-words">
             {currentDate} • Current Payroll Cycle:{' '}
             <span className="font-semibold text-white">
               {currentPayrollMonth}
@@ -158,26 +188,26 @@ export default function DashboardPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 shrink-0">
           <Button
             variant="outline"
             size="sm"
-            className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+            className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white h-9 px-3 text-xs sm:text-sm"
             asChild
           >
             <Link href="/reports">
-              <Download className="mr-2 h-4 w-4" />
+              <Download className="mr-2 h-4 w-4 shrink-0" />
               Download Reports
             </Link>
           </Button>
 
           <Button
             size="sm"
-            className="bg-white font-semibold text-[#1e2a78] shadow-sm hover:bg-blue-50"
+            className="bg-white font-semibold text-[#1e2a78] shadow-sm hover:bg-blue-50 h-9 px-3 text-xs sm:text-sm"
             asChild
           >
             <Link href="/payroll">
-              <Wallet className="mr-2 h-4 w-4" />
+              <Wallet className="mr-2 h-4 w-4 shrink-0" />
               Payroll Control
             </Link>
           </Button>
@@ -185,7 +215,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Executive Metric Cards */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Total Workforce"
           value={loading ? '...' : stats.totalEmployees}
@@ -242,14 +272,14 @@ export default function DashboardPage() {
       </div>
 
       {/* Main Dashboard Hub */}
-      <div className="grid gap-6 md:grid-cols-7">
+      <div className="grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-7">
         {/* Payroll Operations */}
-        <Card className="border shadow-sm md:col-span-4">
+        <Card className="border shadow-sm lg:col-span-4">
           <CardHeader className="border-b bg-muted/20 pb-3">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2 sm:gap-4">
               <div>
                 <CardTitle className="flex items-center gap-2 text-base font-bold">
-                  <Wallet className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
+                  <Wallet className="h-4 w-4 text-[#1e2a78] dark:text-blue-400 shrink-0" />
                   Payroll Operations Status
                 </CardTitle>
 
@@ -360,10 +390,10 @@ export default function DashboardPage() {
         </Card>
 
         {/* Department Distribution */}
-        <Card className="border shadow-sm md:col-span-3">
+        <Card className="border shadow-sm lg:col-span-3">
           <CardHeader className="border-b bg-muted/20 pb-3">
             <CardTitle className="flex items-center gap-2 text-base font-bold">
-              <Users className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
+              <Users className="h-4 w-4 text-[#1e2a78] dark:text-blue-400 shrink-0" />
               Department Distribution
             </CardTitle>
 
@@ -372,7 +402,7 @@ export default function DashboardPage() {
             </CardDescription>
           </CardHeader>
 
-          <CardContent className="space-y-4 p-6 text-xs">
+          <CardContent className="space-y-4 p-4 sm:p-6 text-xs">
             {loading ? (
               <div className="py-8 text-center text-muted-foreground">
                 <Activity className="mx-auto mb-2 h-8 w-8 animate-pulse text-muted-foreground/50" />
@@ -449,7 +479,7 @@ export default function DashboardPage() {
           </div>
         </CardHeader>
 
-        <CardContent className="p-6">
+        <CardContent className="p-4 sm:p-6">
           {loading ? (
             <div className="py-8 text-center text-muted-foreground">
               <Activity className="mx-auto mb-2 h-8 w-8 animate-pulse text-muted-foreground/50" />
@@ -485,12 +515,12 @@ export default function DashboardPage() {
                   <div className="flex min-w-0 items-center gap-3">
                     <div className="h-2 w-2 shrink-0 rounded-full bg-blue-600" />
 
-                    <div className="min-w-0">
+                    <div className="min-w-0 break-words">
                       <span className="font-semibold text-foreground">
                         {activity.action}
                       </span>
 
-                      <span className="ml-2 text-muted-foreground">
+                      <span className="ml-2 text-muted-foreground break-words">
                         by {activity.actor} ({activity.target})
                       </span>
                     </div>

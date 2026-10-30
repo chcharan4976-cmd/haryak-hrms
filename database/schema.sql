@@ -196,6 +196,8 @@ CREATE TABLE users (
 
   password_changed_at TIMESTAMPTZ,
 
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+
   created_at TIMESTAMPTZ DEFAULT NOW(),
 
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -529,6 +531,8 @@ CREATE TABLE employee_statutory_details (
   pt_applicable BOOLEAN DEFAULT TRUE,
 
   pt_state VARCHAR(50),
+
+  pt_amount NUMERIC(10, 2) DEFAULT NULL,
 
 
 
@@ -2040,24 +2044,31 @@ CREATE TABLE timesheets (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   employee_id UUID NOT NULL REFERENCES employees(id),
-  week_start_date DATE NOT NULL,
-  week_end_date DATE NOT NULL,
+  year INTEGER,
+  month INTEGER,
+  period_start DATE,
+  period_end DATE,
+  week_start_date DATE,
+  week_end_date DATE,
   status VARCHAR(30) NOT NULL DEFAULT 'DRAFT',
+  version INTEGER NOT NULL DEFAULT 1,
   total_hours DECIMAL(7,2) NOT NULL DEFAULT 0,
+  billable_hours DECIMAL(7,2) NOT NULL DEFAULT 0,
   submitted_at TIMESTAMPTZ,
+  submitted_by UUID REFERENCES users(id),
   reviewed_by UUID REFERENCES users(id),
   reviewed_at TIMESTAMPTZ,
   review_comments TEXT,
   approved_at TIMESTAMPTZ,
+  approved_by UUID REFERENCES users(id),
   rejected_at TIMESTAMPTZ,
   rejection_reason TEXT,
+  comments TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
-  CONSTRAINT chk_timesheet_dates CHECK (week_end_date >= week_start_date),
   CONSTRAINT chk_timesheet_status CHECK (
-    status IN ('DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'RETURNED')
-  ),
-  UNIQUE(company_id, employee_id, week_start_date, week_end_date)
+    status IN ('DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'REJECTED', 'RETURNED', 'RETURNED_FOR_CORRECTION', 'LOCKED')
+  )
 );
 
 CREATE TABLE timesheet_entries (
@@ -2066,14 +2077,31 @@ CREATE TABLE timesheet_entries (
   timesheet_id UUID NOT NULL REFERENCES timesheets(id) ON DELETE CASCADE,
   employee_id UUID NOT NULL REFERENCES employees(id),
   work_date DATE NOT NULL,
+  entry_date DATE,
   project_name VARCHAR(200),
   task_name VARCHAR(200),
+  task_title VARCHAR(255),
+  task_category VARCHAR(100),
   description TEXT,
   hours DECIMAL(5,2) NOT NULL DEFAULT 0,
   is_billable BOOLEAN DEFAULT FALSE,
+  is_leave BOOLEAN DEFAULT FALSE,
+  leave_type_id UUID REFERENCES leave_types(id) ON DELETE SET NULL,
+  leave_type_name VARCHAR(100),
+  leave_type_code VARCHAR(50),
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT chk_timesheet_entry_hours CHECK (hours >= 0 AND hours <= 24)
+);
+
+CREATE TABLE timesheet_reviews (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  timesheet_id UUID NOT NULL REFERENCES timesheets(id) ON DELETE CASCADE,
+  action VARCHAR(50) NOT NULL,
+  actor_id UUID NOT NULL REFERENCES users(id),
+  actor_role VARCHAR(50) NOT NULL,
+  comments TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 
@@ -2297,6 +2325,7 @@ CREATE TABLE chat_messages (
   attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
   is_ai_message BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ,
   edited_at TIMESTAMPTZ,
   deleted_at TIMESTAMPTZ
 );
@@ -2372,6 +2401,10 @@ CREATE INDEX idx_chat_messages_conversation_created
 
 CREATE INDEX idx_chat_messages_company_created
   ON chat_messages(company_id, created_at);
+
+CREATE INDEX idx_chat_messages_expires_at
+  ON chat_messages(expires_at)
+  WHERE deleted_at IS NULL;
 
 CREATE INDEX idx_chat_receipts_user_read
   ON chat_message_receipts(user_id, read_at);
@@ -2498,6 +2531,64 @@ BEGIN
 END;
 $$;
 
+
+-- ============================================================
+-- ANNUAL LEAVE COMPENSATION LEDGER & AUDIT
+-- ============================================================
+
+CREATE TABLE IF NOT EXISTS annual_leave_compensation_ledgers (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  calendar_year INTEGER NOT NULL,
+  annual_entitlement INTEGER NOT NULL DEFAULT 11,
+  total_leaves_taken NUMERIC(5,2) NOT NULL DEFAULT 0,
+  total_deductions_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+  eligible_compensation_days NUMERIC(5,2) NOT NULL DEFAULT 0,
+  eligible_compensation_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+  approved_compensation_days NUMERIC(5,2) NOT NULL DEFAULT 0,
+  approved_compensation_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+  paid_compensation_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+  audit_status VARCHAR(30) NOT NULL DEFAULT 'PENDING_AUDIT',
+  audited_by UUID REFERENCES users(id),
+  audited_at TIMESTAMPTZ,
+  audit_notes TEXT,
+  settlement_payroll_period_id UUID REFERENCES payroll_periods(id) ON DELETE SET NULL,
+  settlement_payroll_run_id UUID REFERENCES payroll_runs(id) ON DELETE SET NULL,
+  settlement_reference VARCHAR(100),
+  settled_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(company_id, employee_id, calendar_year)
+);
+
+CREATE TABLE IF NOT EXISTS annual_leave_compensation_entries (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  ledger_id UUID REFERENCES annual_leave_compensation_ledgers(id) ON DELETE CASCADE,
+  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  employee_id UUID NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+  calendar_year INTEGER NOT NULL,
+  leave_date DATE NOT NULL,
+  leave_type_name VARCHAR(100) DEFAULT 'Normal Working Day Leave',
+  reason TEXT,
+  source VARCHAR(30) NOT NULL DEFAULT 'TIMESHEET',
+  daily_salary_rate NUMERIC(15,2) NOT NULL DEFAULT 0,
+  deduction_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+  is_eligible_for_compensation BOOLEAN NOT NULL DEFAULT TRUE,
+  compensation_sequence INTEGER,
+  ineligibility_reason TEXT,
+  is_compensated BOOLEAN NOT NULL DEFAULT FALSE,
+  compensated_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+  payroll_period_id UUID REFERENCES payroll_periods(id) ON DELETE SET NULL,
+  payroll_run_id UUID REFERENCES payroll_runs(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(company_id, employee_id, leave_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_annual_leave_comp_ledger ON annual_leave_compensation_ledgers(company_id, calendar_year);
+CREATE INDEX IF NOT EXISTS idx_annual_leave_comp_entries ON annual_leave_compensation_entries(company_id, employee_id, calendar_year);
 
 -- ============================================================
 -- END OF HARYAK HRMS SCHEMA

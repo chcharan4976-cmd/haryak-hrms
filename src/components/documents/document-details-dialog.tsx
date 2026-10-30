@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { toast } from 'sonner'
 import {
@@ -34,6 +35,10 @@ import {
   Lock,
   Loader2,
   RotateCcw,
+  Trash2,
+  Send,
+  Edit2,
+  X,
 } from 'lucide-react'
 import {
   EnterpriseDocumentItem,
@@ -92,7 +97,91 @@ export function DocumentDetailsDialog({
   const [actionReason, setActionReason] = useState('')
   const [actionNotes, setActionNotes] = useState('')
 
+  // Expiry management state
+  const [isEditingExpiry, setIsEditingExpiry] = useState(false)
+  const [newExpiryDate, setNewExpiryDate] = useState(doc?.expiryDate ? String(doc.expiryDate).slice(0, 10) : '')
+  const [updatingExpiry, setUpdatingExpiry] = useState(false)
+
+  // Deletion confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+
   if (!doc) return null
+
+  const isOfficialLetter = Boolean(doc.content) || [
+    'offer_letter',
+    'appointment_letter',
+    'joining_letter',
+    'salary_revision',
+    'relieving_letter',
+    'experience_letter',
+    'resignation_acceptance',
+    'custom_letter',
+  ].includes(doc.documentType) || doc.category === 'employment_hr'
+
+  const canEmployeeDelete = !isAdmin && !isOfficialLetter && doc.status !== 'VERIFIED' && doc.status !== 'ARCHIVED'
+
+  const handleUpdateExpiry = async (dateVal: string | null) => {
+    setUpdatingExpiry(true)
+    try {
+      const res = await fetch(`/api/documents/${doc.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expiryDate: dateVal }),
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to update expiry date')
+      }
+      toast.success(dateVal ? 'Expiry date updated successfully.' : 'Expiry date removed.')
+      setIsEditingExpiry(false)
+      onRefresh()
+    } catch (err: any) {
+      toast.error(err?.message || 'Error updating expiry date.')
+    } finally {
+      setUpdatingExpiry(false)
+    }
+  }
+
+  const handleIssueLetter = async () => {
+    setActionLoading(true)
+    try {
+      const res = await fetch(`/api/documents/${doc.id}/issue`, {
+        method: 'POST',
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to issue letter.')
+      }
+      toast.success(data.message || 'Letter issued to Employee Portal successfully!')
+      onRefresh()
+    } catch (err: any) {
+      toast.error(err?.message || 'Error issuing letter.')
+    } finally {
+      setActionLoading(false)
+    }
+  }
+
+  const handleDeleteDocument = async () => {
+    setDeleting(true)
+    try {
+      const res = await fetch(`/api/documents/${doc.id}`, {
+        method: 'DELETE',
+      })
+      const data = await res.json()
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to delete document')
+      }
+      toast.success(data.message || 'Document permanently deleted.')
+      setShowDeleteConfirm(false)
+      onOpenChange(false)
+      onRefresh()
+    } catch (err: any) {
+      toast.error(err?.message || 'Error deleting document.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const handleVerifyAction = async (
     action: 'VERIFY' | 'REJECT' | 'REQUEST_REPLACEMENT' | 'ARCHIVE' | 'RESTORE',
@@ -214,13 +303,14 @@ export function DocumentDetailsDialog({
   }
 
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto p-6">
+      <DialogContent className="max-w-3xl w-[calc(100vw-2rem)] max-h-[92vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader className="border-b pb-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div className="space-y-1">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="space-y-1 min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <DialogTitle className="text-base font-bold text-foreground">
+                <DialogTitle className="text-base font-bold text-foreground break-words">
                   {doc.title || 'Official Document'}
                 </DialogTitle>
                 {getStatusBadge(doc.status)}
@@ -230,7 +320,7 @@ export function DocumentDetailsDialog({
                   </Badge>
                 )}
               </div>
-              <DialogDescription className="text-xs font-mono text-muted-foreground">
+              <DialogDescription className="text-xs font-mono text-muted-foreground break-words">
                 Ref: {doc.documentNumber || doc.referenceNumber || 'Not assigned'} • {getCategoryLabel(doc.category)}
               </DialogDescription>
             </div>
@@ -405,13 +495,60 @@ export function DocumentDetailsDialog({
                 <span className="font-medium text-foreground">{formatDateDisplay(doc.effectiveDate)}</span>
               </div>
               <div>
-                <span className="text-[11px] text-muted-foreground block">Expiration Date</span>
-                <span className="font-medium text-foreground">{formatDateDisplay(doc.expiryDate)}</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-muted-foreground block">Expiration Date</span>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewExpiryDate(doc.expiryDate ? String(doc.expiryDate).slice(0, 10) : '')
+                        setIsEditingExpiry(!isEditingExpiry)
+                      }}
+                      className="text-[10px] text-[#1e2a78] hover:underline flex items-center gap-0.5"
+                    >
+                      <Edit2 className="h-2.5 w-2.5" /> {isEditingExpiry ? 'Cancel' : 'Edit'}
+                    </button>
+                  )}
+                </div>
+                {isEditingExpiry ? (
+                  <div className="mt-1 space-y-1">
+                    <Input
+                      type="date"
+                      value={newExpiryDate}
+                      onChange={e => setNewExpiryDate(e.target.value)}
+                      className="h-7 text-xs px-2"
+                    />
+                    <div className="flex items-center gap-1">
+                      <Button
+                        size="sm"
+                        className="h-6 px-2 text-[10px] bg-[#1e2a78] text-white"
+                        onClick={() => handleUpdateExpiry(newExpiryDate || null)}
+                        disabled={updatingExpiry}
+                      >
+                        {updatingExpiry ? <Loader2 className="h-2.5 w-2.5 animate-spin" /> : 'Save'}
+                      </Button>
+                      {doc.expiryDate && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[10px] text-red-600 border-red-200"
+                          onClick={() => handleUpdateExpiry(null)}
+                          disabled={updatingExpiry}
+                        >
+                          Remove
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <span className="font-medium text-foreground">{formatDateDisplay(doc.expiryDate)}</span>
+                )}
               </div>
               <div>
                 <span className="text-[11px] text-muted-foreground block">Expiry Status</span>
                 <div className="mt-0.5">{getExpiryBadge(doc.expiryStatus, doc.daysUntilExpiry ?? null)}</div>
               </div>
+
               <div>
                 <span className="text-[11px] text-muted-foreground block">Uploaded At</span>
                 <span className="text-muted-foreground">{formatDateTimeDisplay(doc.createdAt)}</span>
@@ -500,9 +637,9 @@ export function DocumentDetailsDialog({
               Version History ({doc.versions?.length || 1})
             </h4>
             {doc.versions && doc.versions.length > 0 ? (
-              <div className="rounded-lg border overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-muted/40 border-b font-semibold text-muted-foreground">
+              <div className="rounded-lg border overflow-x-auto max-w-full">
+                <table className="w-full text-left text-xs min-w-[500px]">
+                  <thead className="bg-muted/30 border-b font-semibold text-muted-foreground uppercase text-[10px] tracking-wider">
                     <tr>
                       <th className="p-2.5 pl-4">Version</th>
                       <th className="p-2.5">Filename</th>
@@ -536,9 +673,21 @@ export function DocumentDetailsDialog({
           </section>
         </div>
 
-        {/* Admin Verification Actions Toolbar */}
+        {/* Admin / Employee Actions Toolbar */}
         <DialogFooter className="border-t pt-4 flex flex-col sm:flex-row justify-between items-center gap-2">
           <div className="flex items-center gap-2">
+            {(isAdmin || canEmployeeDelete) && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={actionLoading || deleting}
+              >
+                <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+              </Button>
+            )}
+
             {isAdmin && !doc.isArchived && (
               <Button
                 variant="outline"
@@ -564,8 +713,21 @@ export function DocumentDetailsDialog({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            {/* If user is Admin, render verify / reject controls */}
-            {isAdmin && doc.status !== 'VERIFIED' && (
+            {/* If official letter in draft/approved/verified, render Issue to Employee Portal */}
+            {isAdmin && isOfficialLetter && (doc.status === 'DRAFT' || doc.status === 'APPROVED' || doc.status === 'VERIFIED') && (
+              <Button
+                size="sm"
+                className="bg-purple-600 text-white hover:bg-purple-700 text-xs shadow-sm"
+                onClick={handleIssueLetter}
+                disabled={actionLoading}
+              >
+                {actionLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : <Send className="mr-1.5 h-3.5 w-3.5" />}
+                Issue to Employee Portal
+              </Button>
+            )}
+
+            {/* If user is Admin and uploaded doc is unverified, render verify / reject controls */}
+            {isAdmin && !isOfficialLetter && doc.status !== 'VERIFIED' && (
               <>
                 <Button
                   size="sm"
@@ -623,5 +785,49 @@ export function DocumentDetailsDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Permanent Deletion Confirmation Dialog */}
+    <Dialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-600 text-base">
+            <AlertTriangle className="h-5 w-5" /> Delete Document Permanently
+          </DialogTitle>
+          <DialogDescription className="text-xs space-y-2 pt-2">
+            <p>
+              Are you sure you want to permanently delete <strong>{doc.title}</strong>?
+            </p>
+            {doc.employeeName && (
+              <p className="text-muted-foreground">
+                Employee: <strong>{doc.employeeName}</strong> {doc.employeeCode ? `(${doc.employeeCode})` : ''}
+              </p>
+            )}
+            <p className="text-red-600 font-medium">
+              This will permanently delete the document record, version history, and associated file storage. This action cannot be undone.
+            </p>
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter className="gap-2 pt-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowDeleteConfirm(false)}
+            disabled={deleting}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleDeleteDocument}
+            disabled={deleting}
+          >
+            {deleting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <Trash2 className="mr-1.5 h-3.5 w-3.5" />}
+            Permanently Delete
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   )
 }

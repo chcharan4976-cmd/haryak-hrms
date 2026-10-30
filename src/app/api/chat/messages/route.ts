@@ -156,12 +156,15 @@ export async function PATCH(request: NextRequest) {
     const supabase = createAdminClient()
     if (!supabase) throw new Error('Database unavailable')
 
+    const cutoffIso = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString()
     const { data: incoming, error: incomingError } = await supabase
       .from('chat_messages')
       .select('id')
       .eq('company_id', context.companyId)
       .eq('conversation_id', conversationId)
       .neq('sender_user_id', context.authUserId)
+      .is('deleted_at', null)
+      .gte('created_at', cutoffIso)
 
     if (incomingError) throw new Error(incomingError.message)
 

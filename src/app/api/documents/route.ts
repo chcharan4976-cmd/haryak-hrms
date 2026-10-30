@@ -74,11 +74,26 @@ function normalizeStatus(
     : 'DRAFT'
 }
 
+function resolveLifecycleStatus(rowStatus: unknown, metaStatus: unknown): DocumentLifecycleStatus {
+  const normMeta = metaStatus ? normalizeStatus(metaStatus) : null
+  const normRow = rowStatus ? normalizeStatus(rowStatus) : null
+
+  if (normMeta === 'ACKNOWLEDGED' || normRow === 'ACKNOWLEDGED') return 'ACKNOWLEDGED'
+  if (normMeta === 'ISSUED' || normRow === 'ISSUED') return 'ISSUED'
+  if (normMeta === 'APPROVED' || normRow === 'APPROVED') return 'APPROVED'
+  if (normMeta === 'VERIFIED' || normRow === 'VERIFIED') return 'VERIFIED'
+  if (normMeta === 'REJECTED' || normRow === 'REJECTED') return 'REJECTED'
+  if (normMeta === 'PENDING_VERIFICATION' || normRow === 'PENDING_VERIFICATION') return 'PENDING_VERIFICATION'
+  if (normMeta && normMeta !== 'DRAFT') return normMeta
+  if (normRow && normRow !== 'DRAFT') return normRow
+  return normRow || normMeta || 'DRAFT'
+}
+
 function mapDocument(
   row: any,
   meta: Record<string, any>
 ) {
-  const status = normalizeStatus(row.status || meta.status)
+  const status = resolveLifecycleStatus(row.status, meta.status)
   const expiryDate = row.expiry_date || meta.expiryDate || meta.expiry_date || null
   const expiryInfo = computeExpiryStatus(expiryDate)
   const categoryCode = row.category || meta.category || 'employment_hr'
@@ -399,10 +414,10 @@ export async function GET(request: NextRequest) {
 
     /**
      * Strict isolation:
-     * Non-admin employee can only see their own documents or company-wide documents.
+     * Non-admin employee can only see their own documents or company-wide documents/policies.
      */
     query = query.or(
-      `employee_id.eq.${context.employeeId},visibility.in.(company,company_wide)`
+      `employee_id.eq.${context.employeeId},visibility.in.(company,company_wide,all),category.eq.company_policy`
     )
   }
 
@@ -448,11 +463,14 @@ export async function GET(request: NextRequest) {
        * Non-admin employee access rules:
        * - Company policies: visible
        * - Uploaded documents by/for this employee: visible (tracked with lifecycle status)
-       * - Official generated letters: ONLY visible if ISSUED or ACKNOWLEDGED.
+       * - Official generated letters: visible if ISSUED, ACKNOWLEDGED, or APPROVED.
        *   Draft or internal pending letters remain hidden.
        */
       const isCompanyDoc =
-        document.visibility === 'company' || document.visibility === 'company_wide'
+        document.visibility === 'company' ||
+        document.visibility === 'company_wide' ||
+        document.visibility === 'all' ||
+        document.category === 'company_policy'
 
       if (isCompanyDoc) {
         return true
@@ -471,7 +489,10 @@ export async function GET(request: NextRequest) {
 
       if (isGeneratedLetter) {
         return (
-          document.status === 'ISSUED' || document.status === 'ACKNOWLEDGED'
+          document.status === 'ISSUED' ||
+          document.status === 'ACKNOWLEDGED' ||
+          document.status === 'APPROVED' ||
+          document.visibility === 'employee'
         )
       }
 

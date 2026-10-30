@@ -16,13 +16,9 @@ import {
   createAuditLog,
 } from '@/lib/services/audit-service'
 
-type DocumentLifecycleStatus =
-  | 'DRAFT'
-  | 'PENDING_APPROVAL'
-  | 'APPROVED'
-  | 'ISSUED'
-  | 'ACKNOWLEDGED'
-  | 'SUPERSEDED'
+import {
+  type DocumentLifecycleStatus,
+} from '@/lib/types/document'
 
 function parseDocumentMeta(
   description: unknown
@@ -79,16 +75,20 @@ function normalizeLifecycleStatus(
       .trim()
       .toUpperCase()
 
-  const valid:
-    DocumentLifecycleStatus[] =
-    [
-      'DRAFT',
-      'PENDING_APPROVAL',
-      'APPROVED',
-      'ISSUED',
-      'ACKNOWLEDGED',
-      'SUPERSEDED',
-    ]
+  const valid: DocumentLifecycleStatus[] = [
+    'DRAFT',
+    'UPLOADED',
+    'PENDING_VERIFICATION',
+    'VERIFIED',
+    'REJECTED',
+    'REPLACEMENT_REQUESTED',
+    'EXPIRED',
+    'ARCHIVED',
+    'APPROVED',
+    'ISSUED',
+    'ACKNOWLEDGED',
+    'SUPERSEDED',
+  ]
 
   return valid.includes(
     normalized as DocumentLifecycleStatus
@@ -515,24 +515,19 @@ export async function POST(
     )
   }
 
-  if (
-    currentStatus !==
-    'APPROVED'
-  ) {
+  const validForIssuance: DocumentLifecycleStatus[] = ['APPROVED', 'DRAFT', 'VERIFIED']
+  if (!validForIssuance.includes(currentStatus)) {
     return NextResponse.json(
       {
-        success:
-          false,
-
-        error:
-          `Only an APPROVED document can be issued. Current status is ${currentStatus}.`,
+        success: false,
+        error: `Only a DRAFT, APPROVED, or VERIFIED document can be issued. Current status is ${currentStatus}.`,
       },
       {
-        status:
-          409,
+        status: 409,
       }
     )
   }
+
 
   const now =
     new Date()
@@ -624,6 +619,15 @@ export async function POST(
         'documents'
       )
       .update({
+        status:
+          'ISSUED',
+
+        issue_date:
+          now.split('T')[0],
+
+        requires_acknowledgement:
+          true,
+
         description:
           JSON.stringify(
             issuedMeta

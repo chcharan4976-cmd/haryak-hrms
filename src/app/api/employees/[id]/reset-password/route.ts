@@ -33,7 +33,7 @@ export async function POST(
   if (isUUID) {
     query = query.or(`id.eq.${id},user_id.eq.${id}`)
   } else {
-    query = query.eq('employee_code', id.toUpperCase())
+    query = query.or(`employee_code.eq.${id.toUpperCase()},employee_code.ilike.${id.trim()}`)
   }
 
   const { data: emp, error: empErr } = await query.maybeSingle()
@@ -70,6 +70,8 @@ export async function POST(
     password: newTempPassword,
     user_metadata: {
       must_change_password: true,
+      must_change_credentials: false,
+      role: 'EMPLOYEE',
       employee_id: emp.id,
       employee_code: emp.employee_code,
       full_name: emp.full_name,
@@ -82,6 +84,13 @@ export async function POST(
       error: `Failed to update auth user: ${authErr.message}`,
       canRepair: true,
     }, { status: 500 })
+  }
+
+  // Also flag must_change_password in public.users if column exists
+  try {
+    await supabase.from('users').update({ must_change_password: true }).eq('id', authUserId)
+  } catch {
+    // Non-fatal if column not present in schema
   }
 
   // Revoke active sessions where supported
@@ -107,6 +116,15 @@ export async function POST(
   return NextResponse.json({
     success: true,
     temporaryPassword: newTempPassword,
+    officialEmail: emp.official_email,
+    employeeName: emp.full_name,
+    employeeCode: emp.employee_code,
     message: `Temporary password reset successfully for ${emp.full_name}.`,
+  }, {
+    headers: {
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+    },
   })
 }

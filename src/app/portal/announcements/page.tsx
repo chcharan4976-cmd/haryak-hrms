@@ -50,10 +50,10 @@ export default function AnnouncementsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-5xl mx-auto">
       <div>
-        <h1 className="text-3xl font-bold tracking-tight">Announcements</h1>
-        <p className="text-muted-foreground mt-1">Stay updated with the latest company news and notices.</p>
+        <h1 className="text-xl sm:text-2xl lg:text-3xl font-bold tracking-tight">Announcements</h1>
+        <p className="text-xs sm:text-sm text-muted-foreground mt-1">Stay updated with the latest company news and notices.</p>
       </div>
 
       {loading ? (
@@ -61,7 +61,7 @@ export default function AnnouncementsPage() {
           <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
         </div>
       ) : announcements.length === 0 ? (
-        <div className="p-12 text-center text-sm text-muted-foreground border rounded-xl bg-muted/20 border-dashed">
+        <div className="p-8 sm:p-12 text-center text-sm text-muted-foreground border rounded-xl bg-muted/20 border-dashed">
           No announcements available.
         </div>
       ) : (
@@ -72,15 +72,15 @@ export default function AnnouncementsPage() {
             
             return (
               <Card key={item.id} className={item.is_pinned ? 'border-blue-200 dark:border-blue-800 shadow-sm' : ''}>
-                <CardContent className="p-6">
-                  <div className="flex gap-4">
-                    <div className="hidden sm:flex shrink-0 h-12 w-12 rounded-full items-center justify-center bg-muted">
-                      <Icon className="h-6 w-6 text-muted-foreground" />
+                <CardContent className="p-4 sm:p-6">
+                  <div className="flex gap-3 sm:gap-4">
+                    <div className="hidden sm:flex shrink-0 h-10 w-10 sm:h-12 sm:w-12 rounded-full items-center justify-center bg-muted">
+                      <Icon className="h-5 w-5 sm:h-6 sm:w-6 text-muted-foreground" />
                     </div>
-                    <div className="flex-1 space-y-2">
+                    <div className="flex-1 min-w-0 space-y-2">
                       <div className="flex flex-col sm:flex-row justify-between sm:items-start gap-2">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className={`px-2 py-0.5 rounded text-xs font-semibold ${color}`}>
                               {item.category || 'General'}
                             </span>
@@ -90,16 +90,16 @@ export default function AnnouncementsPage() {
                               </span>
                             )}
                           </div>
-                          <h3 className="text-xl font-semibold leading-none tracking-tight">
+                          <h3 className="text-base sm:text-lg lg:text-xl font-semibold leading-snug tracking-tight break-words">
                             {item.title}
                           </h3>
                         </div>
-                        <div className="text-sm text-muted-foreground sm:text-right shrink-0">
+                        <div className="text-xs sm:text-sm text-muted-foreground sm:text-right shrink-0">
                           <div>{new Date(item.created_at).toLocaleDateString()}</div>
-                          <div className="text-xs">by HR Team</div>
+                          <div className="text-[11px] sm:text-xs">by HR Team</div>
                         </div>
                       </div>
-                      <div className="text-muted-foreground text-sm mt-2 leading-relaxed whitespace-pre-wrap">
+                      <div className="text-muted-foreground text-xs sm:text-sm mt-2 leading-relaxed whitespace-pre-wrap break-words">
                         {item.content}
                       </div>
                     </div>

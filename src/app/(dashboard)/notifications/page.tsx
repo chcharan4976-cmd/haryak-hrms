@@ -2,6 +2,9 @@
 
 import { Bell, Check, Clock, Calendar, FileText, CheckCircle2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/shared/page-header';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 
 const NOTIFICATIONS = [
   { id: '1', title: 'Leave Request Approved', msg: 'Your Casual Leave request for Aug 25-26 has been approved by your manager.', time: '2 hours ago', read: false, type: 'leave', icon: Calendar },
@@ -12,44 +15,41 @@ const NOTIFICATIONS = [
 
 export default function NotificationsPage() {
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 space-y-4 md:space-y-0">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">Notifications</h1>
-          <p className="text-sm text-gray-500">Stay updated with system alerts and actions</p>
-        </div>
-        <div>
-          <button className="inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 shadow-sm">
-            <Check className="w-4 h-4 mr-2" /> Mark all as read
-          </button>
-        </div>
-      </div>
+    <div className="space-y-6 w-full max-w-4xl mx-auto">
+      <PageHeader
+        title="Notifications"
+        description="Stay updated with organizational alerts, requests, and system actions."
+      >
+        <Button variant="outline" size="sm" className="h-9 w-full sm:w-auto text-xs">
+          <Check className="w-3.5 h-3.5 mr-1.5" /> Mark all as read
+        </Button>
+      </PageHeader>
 
-      <div className="bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
-        <ul className="divide-y divide-gray-200">
+      <Card className="overflow-hidden shadow-xs">
+        <ul className="divide-y divide-border">
           {NOTIFICATIONS.map((notif) => {
             const Icon = notif.icon;
             return (
-              <li key={notif.id} className={cn("p-4 hover:bg-gray-50 transition-colors cursor-pointer", !notif.read ? "bg-blue-50/50" : "")}>
-                <div className="flex space-x-4">
-                  <div className={cn("flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center", 
-                    !notif.read ? "bg-blue-100 text-blue-600" : "bg-gray-100 text-gray-500"
+              <li key={notif.id} className={cn("p-3.5 sm:p-4 hover:bg-muted/30 transition-colors cursor-pointer", !notif.read ? "bg-blue-50/40 dark:bg-blue-950/20" : "")}>
+                <div className="flex items-start gap-3 sm:gap-4">
+                  <div className={cn("shrink-0 w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center", 
+                    !notif.read ? "bg-[#1e2a78]/10 text-[#1e2a78] dark:bg-blue-950/40 dark:text-blue-300" : "bg-muted text-muted-foreground"
                   )}>
-                    <Icon className="w-5 h-5" />
+                    <Icon className="w-4 h-4 sm:w-5 sm:h-5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className={cn("text-sm font-medium", !notif.read ? "text-gray-900" : "text-gray-700")}>
+                    <p className={cn("text-xs font-semibold", !notif.read ? "text-foreground" : "text-muted-foreground")}>
                       {notif.title}
                     </p>
-                    <p className="text-sm text-gray-500 mt-1">{notif.msg}</p>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed break-words">{notif.msg}</p>
                     <div className="flex items-center mt-2">
-                      <Clock className="w-3.5 h-3.5 text-gray-400 mr-1" />
-                      <span className="text-xs text-gray-400">{notif.time}</span>
+                      <Clock className="w-3 h-3 text-muted-foreground mr-1" />
+                      <span className="text-[11px] text-muted-foreground">{notif.time}</span>
                     </div>
                   </div>
                   {!notif.read && (
-                    <div className="flex-shrink-0 flex items-center">
-                      <span className="w-2.5 h-2.5 bg-blue-600 rounded-full"></span>
+                    <div className="shrink-0 flex items-center pt-1">
+                      <span className="w-2 h-2 bg-[#1e2a78] dark:bg-blue-400 rounded-full"></span>
                     </div>
                   )}
                 </div>
@@ -57,7 +57,7 @@ export default function NotificationsPage() {
             );
           })}
         </ul>
-      </div>
+      </Card>
     </div>
   );
 }

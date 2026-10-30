@@ -10,7 +10,6 @@ export async function updateSession(request: NextRequest) {
     pathname.startsWith('/_next') ||
     pathname.startsWith('/login') ||
     pathname.startsWith('/forgot-password') ||
-    pathname.startsWith('/first-login') ||
     pathname.startsWith('/auth') ||
     pathname === '/api/auth/login' ||
     pathname === '/api/auth/forgot-password' ||
@@ -30,11 +29,18 @@ export async function updateSession(request: NextRequest) {
 
   // 2. Check for local auth session cookie (UI/session hint)
   const localSessionCookie = request.cookies.get('haryak_session')
-  let localUser: { id: string; email: string; roles: string[] } | null = null
+  let localUser: any = null
 
   if (localSessionCookie?.value) {
     try {
-      localUser = JSON.parse(decodeURIComponent(localSessionCookie.value))
+      const parsed = JSON.parse(decodeURIComponent(localSessionCookie.value))
+      localUser = parsed
+      // Normalize roles if structured under user object or single role
+      if (!localUser.roles && localUser.user?.role) {
+        localUser.roles = [localUser.user.role]
+      } else if (!localUser.roles && localUser.role) {
+        localUser.roles = [localUser.role]
+      }
     } catch {
       localUser = null
     }
@@ -85,9 +91,62 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  // 5. RBAC Protection
-  // If user is employee only and tries to access executive/admin routes
-  if (localUser && localUser.roles?.length === 1 && localUser.roles[0] === 'EMPLOYEE') {
+  // 6. ROLE & IDENTITY DETERMINATION
+  const roles: string[] = 
+    localUser?.roles || 
+    (supabaseUser?.user_metadata?.role ? [supabaseUser.user_metadata.role] : []) ||
+    (localUser?.user?.role ? [localUser.user.role] : [])
+
+  const hasEmployeeProfile = Boolean(
+    localUser?.employeeCode || 
+    supabaseUser?.user_metadata?.employee_code || 
+    supabaseUser?.user_metadata?.employee_id
+  )
+
+  const isEmployeeClaim = 
+    roles.includes('EMPLOYEE') || 
+    supabaseUser?.user_metadata?.role === 'EMPLOYEE' ||
+    hasEmployeeProfile
+
+  const isAdminClaim = 
+    roles.some((r: string) => ['SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN', 'ADMINISTRATION'].includes(r)) ||
+    ['SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN', 'ADMINISTRATION'].includes(supabaseUser?.user_metadata?.role)
+
+  const isEmployeeOnly = isEmployeeClaim && !isAdminClaim
+
+  // 7. FORCED CREDENTIALS / PASSWORD RESET PROTECTION
+  const mustChangeCredentials = Boolean(
+    supabaseUser?.user_metadata?.must_change_credentials ||
+    (localUser as any)?.mustChangeCredentials
+  )
+  const mustChangePassword = Boolean(
+    supabaseUser?.user_metadata?.must_change_password ||
+    (localUser as any)?.mustChangePassword
+  )
+
+  if (isEmployeeOnly) {
+    // Employees NEVER access admin bootstrap credentials; route to employee change-password if reset required
+    if (pathname === '/first-login/change-credentials' || pathname === '/first-login/admin-security') {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = (mustChangePassword || mustChangeCredentials)
+        ? '/first-login/change-password'
+        : '/portal/home'
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    if ((mustChangeCredentials || mustChangePassword) && pathname !== '/first-login/change-password') {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/first-login/change-password'
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    if (!mustChangePassword && !mustChangeCredentials && pathname === '/first-login/change-password') {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/portal/home'
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    // RBAC: Block employee access to executive/admin routes
     const isAdminRoute = 
       pathname.startsWith('/dashboard') ||
       pathname.startsWith('/admin') ||
@@ -99,8 +158,31 @@ export async function updateSession(request: NextRequest) {
 
     if (isAdminRoute) {
       const portalUrl = request.nextUrl.clone()
-      portalUrl.pathname = '/portal/home'
+      portalUrl.pathname = (mustChangePassword || mustChangeCredentials)
+        ? '/first-login/change-password'
+        : '/portal/home'
       return NextResponse.redirect(portalUrl)
+    }
+  } else if (isAdminClaim) {
+    // Initial bootstrap Super Admin: must complete initial credentials setup
+    if (mustChangeCredentials && pathname !== '/first-login/change-credentials' && pathname !== '/first-login/admin-security') {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/first-login/change-credentials'
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    // Standard administrator password reset requirement
+    if (!mustChangeCredentials && mustChangePassword && pathname !== '/first-login/change-password') {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/first-login/change-password'
+      return NextResponse.redirect(redirectUrl)
+    }
+
+    // Completed administrators visiting first-login routes
+    if (!mustChangeCredentials && !mustChangePassword && (pathname === '/first-login/change-credentials' || pathname === '/first-login/change-password' || pathname === '/first-login/admin-security')) {
+      const redirectUrl = request.nextUrl.clone()
+      redirectUrl.pathname = '/dashboard'
+      return NextResponse.redirect(redirectUrl)
     }
   }
 

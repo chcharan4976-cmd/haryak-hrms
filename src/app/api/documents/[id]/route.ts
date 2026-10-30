@@ -4,6 +4,7 @@ import { resolveRequestContext, isAdmin } from '@/lib/services/company-resolver'
 import { createAuditLog } from '@/lib/services/audit-service'
 import { getActiveLetterhead } from '@/lib/services/letterhead-service'
 import { computeExpiryStatus, getCategoryLabel } from '@/lib/types/document'
+import { deleteDocumentFile } from '@/lib/services/document-storage-service'
 
 export async function GET(
   request: NextRequest,
@@ -196,8 +197,8 @@ export async function PUT(
   let meta: any = {}
   try { meta = JSON.parse(existingDoc.description || '{}') } catch {}
 
-  // If already ISSUED, create version 2 instead of silently overwriting!
-  if (meta.status === 'ISSUED' || meta.status === 'ACKNOWLEDGED') {
+  // If updating content on an already ISSUED document, create version 2 instead of silently overwriting!
+  if (content && (meta.status === 'ISSUED' || meta.status === 'ACKNOWLEDGED')) {
     const newVersion = (existingDoc.version || 1) + 1
     const newMeta = {
       ...meta,
@@ -210,7 +211,7 @@ export async function PUT(
       content: content || meta.content,
       issueDate: issueDate || meta.issueDate,
       effectiveDate: effectiveDate || meta.effectiveDate,
-      expiryDate: expiryDate || meta.expiryDate,
+      expiryDate: expiryDate !== undefined ? expiryDate : meta.expiryDate,
     }
 
     const { data: vDoc, error: vErr } = await supabase
@@ -260,12 +261,15 @@ export async function PUT(
     })
   }
 
-  // Update existing draft
+  // Update existing document metadata or draft content
   if (content) meta.content = content
   if (status) meta.status = status
   if (issueDate) meta.issueDate = issueDate
-  if (effectiveDate) meta.effectiveDate = effectiveDate
-  if (expiryDate !== undefined) meta.expiryDate = expiryDate
+  if (effectiveDate !== undefined) meta.effectiveDate = effectiveDate || null
+  if (expiryDate !== undefined) {
+    const cleanExpiry = expiryDate ? String(expiryDate).slice(0, 10) : null
+    meta.expiryDate = cleanExpiry
+  }
 
   const updates: Record<string, any> = {
     title: content?.subject || existingDoc.title,
@@ -273,8 +277,10 @@ export async function PUT(
     updated_at: new Date().toISOString(),
   }
   if (issueDate) updates.issue_date = issueDate
-  if (effectiveDate) updates.effective_date = effectiveDate
-  if (expiryDate !== undefined) updates.expiry_date = expiryDate
+  if (effectiveDate !== undefined) updates.effective_date = effectiveDate || null
+  if (expiryDate !== undefined) {
+    updates.expiry_date = expiryDate ? String(expiryDate).slice(0, 10) : null
+  }
   if (status) updates.status = status
   if (category) updates.category = category
   if (subcategory) updates.subcategory = subcategory
@@ -298,13 +304,13 @@ export async function PUT(
     entityType: 'document',
     entityId: id,
     entityName: meta.content?.subject || existingDoc.title,
-    description: `Edited document draft ${meta.documentNumber || id}`,
+    description: `Updated document ${meta.documentNumber || id} details (expiry: ${updates.expiry_date || 'none'})`,
     reason: 'DOCUMENT_EDIT',
   })
 
   return NextResponse.json({
     success: true,
-    message: 'Document draft updated successfully.',
+    message: 'Document updated successfully.',
   })
 }
 
@@ -317,34 +323,130 @@ export async function DELETE(
     return NextResponse.json({ success: false, error: resolved.error.message }, { status: resolved.error.status })
   }
   const { context } = resolved
-  if (!isAdmin(context)) {
-    return NextResponse.json({ success: false, error: 'Unauthorized: Only admins can archive documents.' }, { status: 403 })
-  }
+  const userIsAdmin = isAdmin(context)
 
   const { id } = await params
   const supabase = createAdminClient()
   if (!supabase) return NextResponse.json({ success: false, error: 'Database unavailable' }, { status: 503 })
 
-  // Soft-archive to preserve audit history and avoid breaking references
-  const now = new Date().toISOString()
-  const { data: doc, error: updateErr } = await supabase
+  // 1. Fetch document with employee information
+  const { data: doc, error: docErr } = await supabase
     .from('documents')
-    .update({
-      is_archived: true,
-      archived_at: now,
-      archived_by: context.authUserId,
-      status: 'ARCHIVED',
-      updated_at: now,
-    })
+    .select(`
+      *,
+      employees:employee_id(id, employee_code, full_name, user_id)
+    `)
     .eq('company_id', context.companyId)
     .eq('id', id)
-    .select('title')
-    .single()
+    .maybeSingle()
 
-  if (updateErr) {
-    return NextResponse.json({ success: false, error: updateErr.message }, { status: 500 })
+  if (docErr || !doc) {
+    return NextResponse.json({ success: false, error: 'Document not found.' }, { status: 404 })
   }
 
+  // 2. Strict permission enforcement
+  if (!userIsAdmin) {
+    // Non-admin employee can only delete their own uploaded documents
+    if (doc.employee_id !== context.employeeId) {
+      return NextResponse.json({ success: false, error: 'Forbidden: You can only delete your own documents.' }, { status: 403 })
+    }
+
+    if (doc.uploaded_by && doc.uploaded_by !== context.authUserId) {
+      return NextResponse.json({ success: false, error: 'Forbidden: You can only delete documents that you uploaded.' }, { status: 403 })
+    }
+
+    const isOfficialLetter = [
+      'offer_letter',
+      'appointment_letter',
+      'joining_letter',
+      'salary_revision',
+      'relieving_letter',
+      'experience_letter',
+      'resignation_acceptance',
+      'custom_letter',
+    ].includes(doc.document_type) || Boolean(doc.description?.includes('"content":')) || doc.category === 'company_policy' || doc.category === 'employment_hr'
+
+    if (isOfficialLetter) {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Official company employment records cannot be deleted by employees.',
+      }, { status: 403 })
+    }
+
+    if (doc.status === 'VERIFIED' || doc.verification_status === 'verified') {
+      return NextResponse.json({
+        success: false,
+        error: 'Forbidden: Verified documents cannot be deleted without HR administrator approval.',
+      }, { status: 403 })
+    }
+  }
+
+  // 3. Check for soft-archive vs permanent delete
+  const actionParam = request.nextUrl.searchParams.get('action')
+  if (actionParam === 'archive') {
+    const now = new Date().toISOString()
+    const { error: archiveErr } = await supabase
+      .from('documents')
+      .update({
+        is_archived: true,
+        archived_at: now,
+        archived_by: context.authUserId,
+        status: 'ARCHIVED',
+        updated_at: now,
+      })
+      .eq('id', id)
+
+    if (archiveErr) {
+      return NextResponse.json({ success: false, error: archiveErr.message }, { status: 500 })
+    }
+
+    await createAuditLog({
+      companyId: context.companyId,
+      userId: context.authUserId,
+      userEmail: context.email,
+      userName: context.fullName,
+      action: 'deleted',
+      entityType: 'document',
+      entityId: id,
+      entityName: doc.title,
+      description: `Archived document "${doc.title}" (${doc.id})`,
+      reason: 'DOCUMENT_ARCHIVE',
+    })
+
+    return NextResponse.json({
+      success: true,
+      message: 'Document safely archived.',
+    })
+  }
+
+  // 4. Permanent deletion: clean up storage file if unreferenced
+  if (doc.file_url) {
+    try {
+      const { count } = await supabase
+        .from('documents')
+        .select('id', { count: 'exact', head: true })
+        .eq('company_id', context.companyId)
+        .eq('file_url', doc.file_url)
+        .neq('id', id)
+
+      if (!count || count === 0) {
+        await deleteDocumentFile(doc.file_url)
+      }
+    } catch (storageErr) {
+      console.warn('[DELETE document] Storage cleanup notice:', storageErr)
+    }
+  }
+
+  // 5. Remove version history records
+  await supabase.from('document_versions').delete().eq('document_id', id)
+
+  // 6. Delete document row from database
+  const { error: delErr } = await supabase.from('documents').delete().eq('id', id)
+  if (delErr) {
+    return NextResponse.json({ success: false, error: delErr.message }, { status: 500 })
+  }
+
+  // 7. Audit log
   await createAuditLog({
     companyId: context.companyId,
     userId: context.authUserId,
@@ -353,13 +455,14 @@ export async function DELETE(
     action: 'deleted',
     entityType: 'document',
     entityId: id,
-    entityName: doc?.title || 'Document',
-    description: `Archived document ${doc?.title || id}`,
-    reason: 'DOCUMENT_ARCHIVE',
+    entityName: doc.title,
+    description: `Permanently deleted document "${doc.title}" (${doc.document_type}) for employee ${doc.employees?.full_name || 'N/A'} (${doc.employees?.employee_code || 'N/A'})`,
+    reason: 'DOCUMENT_PERMANENT_DELETION',
   })
 
   return NextResponse.json({
     success: true,
-    message: 'Document safely archived. Audit history preserved.',
+    message: 'Document permanently deleted.',
   })
 }
+

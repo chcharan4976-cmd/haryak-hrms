@@ -30,6 +30,15 @@ import {
   Card,
   CardContent,
 } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
 
 type ApprovalTab =
   | 'pending'
@@ -148,6 +157,10 @@ function normalizeStatus(
       .trim()
       .toLowerCase()
       .replace(/\s+/g, '_')
+
+  if (status === 'draft') {
+    return 'Returned'
+  }
 
   if (
     status === 'approved'
@@ -788,13 +801,29 @@ export default function ApprovalsPage() {
                   ? timesheetPayload.data
                   : []
 
+          const submittedTimesheetRows =
+            timesheetRows.filter(
+              timesheet => {
+                const raw = String(
+                  timesheet.status || ''
+                )
+                  .trim()
+                  .toUpperCase()
+
+                return (
+                  raw !== 'DRAFT' &&
+                  raw !== ''
+                )
+              }
+            )
+
           const mappedLeaves =
             leaveRows.map(
               mapLeaveRequest
             )
 
           const mappedTimesheets =
-            timesheetRows.map(
+            submittedTimesheetRows.map(
               mapTimesheet
             )
 
@@ -1314,19 +1343,19 @@ export default function ApprovalsPage() {
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
         <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-amber-100 p-2.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
+          <CardContent className="flex items-center gap-2.5 sm:gap-3 p-3 sm:p-4">
+            <div className="rounded-xl bg-amber-100 p-2 sm:p-2.5 text-amber-700 dark:bg-amber-950 dark:text-amber-300">
               <Clock3 className="h-4 w-4" />
             </div>
 
-            <div>
-              <p className="text-[11px] font-medium text-muted-foreground">
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-muted-foreground">
                 Pending
               </p>
 
-              <p className="text-xl font-bold">
+              <p className="text-lg sm:text-xl font-bold">
                 {counts.pending}
               </p>
             </div>
@@ -1334,17 +1363,17 @@ export default function ApprovalsPage() {
         </Card>
 
         <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-emerald-100 p-2.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+          <CardContent className="flex items-center gap-2.5 sm:gap-3 p-3 sm:p-4">
+            <div className="rounded-xl bg-emerald-100 p-2 sm:p-2.5 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
               <CheckCircle2 className="h-4 w-4" />
             </div>
 
-            <div>
-              <p className="text-[11px] font-medium text-muted-foreground">
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-muted-foreground">
                 Approved
               </p>
 
-              <p className="text-xl font-bold">
+              <p className="text-lg sm:text-xl font-bold">
                 {counts.approved}
               </p>
             </div>
@@ -1352,17 +1381,17 @@ export default function ApprovalsPage() {
         </Card>
 
         <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-red-100 p-2.5 text-red-700 dark:bg-red-950 dark:text-red-300">
+          <CardContent className="flex items-center gap-2.5 sm:gap-3 p-3 sm:p-4">
+            <div className="rounded-xl bg-red-100 p-2 sm:p-2.5 text-red-700 dark:bg-red-950 dark:text-red-300">
               <X className="h-4 w-4" />
             </div>
 
-            <div>
-              <p className="text-[11px] font-medium text-muted-foreground">
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-muted-foreground">
                 Rejected / Returned
               </p>
 
-              <p className="text-xl font-bold">
+              <p className="text-lg sm:text-xl font-bold">
                 {counts.rejected}
               </p>
             </div>
@@ -1370,17 +1399,17 @@ export default function ApprovalsPage() {
         </Card>
 
         <Card>
-          <CardContent className="flex items-center gap-3 p-4">
-            <div className="rounded-xl bg-blue-100 p-2.5 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+          <CardContent className="flex items-center gap-2.5 sm:gap-3 p-3 sm:p-4">
+            <div className="rounded-xl bg-blue-100 p-2 sm:p-2.5 text-blue-700 dark:bg-blue-950 dark:text-blue-300">
               <CheckSquare className="h-4 w-4" />
             </div>
 
-            <div>
-              <p className="text-[11px] font-medium text-muted-foreground">
+            <div className="min-w-0">
+              <p className="truncate text-[11px] font-medium text-muted-foreground">
                 Total
               </p>
 
-              <p className="text-xl font-bold">
+              <p className="text-lg sm:text-xl font-bold">
                 {counts.all}
               </p>
             </div>
@@ -1389,9 +1418,9 @@ export default function ApprovalsPage() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="border-b bg-muted/20 px-4">
+        <div className="border-b bg-muted/20 px-3 sm:px-4">
           <nav
-            className="flex gap-5 overflow-x-auto text-xs"
+            className="flex gap-3 sm:gap-5 overflow-x-auto no-scrollbar text-xs"
             aria-label="Approval tabs"
           >
             {tabs.map(
@@ -1470,9 +1499,9 @@ export default function ApprovalsPage() {
               />
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[1050px] text-left text-xs">
-                <thead className="border-b bg-muted/50 text-[10px] font-semibold uppercase text-muted-foreground">
+            <div className="relative w-full overflow-x-auto">
+              <table className="w-full min-w-[800px] text-left text-xs">
+                <thead className="border-b bg-muted/30 text-[10px] font-semibold uppercase text-muted-foreground tracking-wider">
                   <tr>
                     <th className="px-4 py-3">
                       Request
@@ -1700,151 +1729,107 @@ export default function ApprovalsPage() {
         </div>
       </div>
 
-      {actionDialog && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="w-full max-w-lg rounded-2xl border bg-background p-5 shadow-2xl">
-            <div className="space-y-1">
-              <h2 className="text-base font-bold text-foreground">
-                {actionDialog.action ===
-                'return'
-                  ? 'Return Timesheet for Correction'
-                  : `Reject ${actionDialog.item.type}`}
-              </h2>
+      <Dialog
+        open={Boolean(actionDialog)}
+        onOpenChange={(open) => {
+          if (!open && !processingId) {
+            closeActionDialog()
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {actionDialog?.action === 'return'
+                ? 'Return Timesheet for Correction'
+                : `Reject ${actionDialog?.item.type || 'Request'}`}
+            </DialogTitle>
+            <DialogDescription>
+              {actionDialog?.action === 'return'
+                ? 'Explain what the employee must correct before resubmitting the timesheet.'
+                : 'Provide a clear reason. This reason will be stored with the workflow record.'}
+            </DialogDescription>
+          </DialogHeader>
 
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                {actionDialog.action ===
-                'return'
-                  ? 'Explain what the employee must correct before resubmitting the timesheet.'
-                  : 'Provide a clear reason. This reason will be stored with the workflow record.'}
-              </p>
-            </div>
+          {actionDialog && (
+            <div className="space-y-4 py-2">
+              <div className="rounded-xl border bg-muted/20 p-3">
+                <p className="text-xs font-semibold">
+                  {actionDialog.item.requester}
+                  {actionDialog.item.requesterCode
+                    ? ` (${actionDialog.item.requesterCode})`
+                    : ''}
+                </p>
+                <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                  {actionDialog.item.details}
+                </p>
+              </div>
 
-            <div className="mt-4 rounded-xl border bg-muted/20 p-3">
-              <p className="text-xs font-semibold">
-                {
-                  actionDialog.item.requester
-                }
-
-                {actionDialog.item.requesterCode
-                  ? ` (${actionDialog.item.requesterCode})`
-                  : ''}
-              </p>
-
-              <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                {
-                  actionDialog.item.details
-                }
-              </p>
-            </div>
-
-            <div className="mt-4">
-              <label
-                htmlFor="approval-comments"
-                className="mb-1.5 block text-xs font-semibold text-foreground"
-              >
-                Reason
-              </label>
-
-              <textarea
-                id="approval-comments"
-                value={
-                  actionComments
-                }
-                onChange={(
-                  event
-                ) =>
-                  setActionComments(
-                    event.target
-                      .value
-                  )
-                }
-                placeholder={
-                  actionDialog.action ===
-                  'return'
-                    ? 'Example: Please correct the missing hours for 15 September and resubmit.'
-                    : 'Enter rejection reason...'
-                }
-                rows={4}
-                disabled={
-                  Boolean(
-                    processingId
-                  )
-                }
-                className="w-full resize-none rounded-xl border bg-background px-3 py-2.5 text-xs outline-none transition focus:border-[#1e2a78] focus:ring-2 focus:ring-[#1e2a78]/10 disabled:opacity-60"
-              />
-
-              <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
-                <span>
-                  Minimum 3 characters
-                </span>
-
-                <span>
-                  {
-                    actionComments.trim()
-                      .length
-                  }{' '}
-                  characters
-                </span>
+              <div>
+                <Label
+                  htmlFor="approval-comments"
+                  className="mb-1.5 block text-xs font-semibold"
+                >
+                  Reason
+                </Label>
+                <textarea
+                  id="approval-comments"
+                  value={actionComments}
+                  onChange={(event) => setActionComments(event.target.value)}
+                  placeholder={
+                    actionDialog.action === 'return'
+                      ? 'Example: Please correct the missing hours for 15 September and resubmit.'
+                      : 'Enter rejection reason...'
+                  }
+                  rows={4}
+                  disabled={Boolean(processingId)}
+                  className="w-full resize-none rounded-xl border bg-background px-3 py-2.5 text-xs outline-none transition focus:border-[#1e2a78] focus:ring-2 focus:ring-[#1e2a78]/10 disabled:opacity-60"
+                />
+                <div className="mt-1 flex justify-between text-[10px] text-muted-foreground">
+                  <span>Minimum 3 characters</span>
+                  <span>{actionComments.trim().length} characters</span>
+                </div>
               </div>
             </div>
+          )}
 
-            <div className="mt-5 flex justify-end gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={
-                  Boolean(
-                    processingId
-                  )
-                }
-                onClick={
-                  closeActionDialog
-                }
-              >
-                Cancel
-              </Button>
-
-              <Button
-                size="sm"
-                disabled={
-                  Boolean(
-                    processingId
-                  ) ||
-                  actionComments.trim()
-                    .length < 3
-                }
-                className={
-                  actionDialog.action ===
-                  'return'
-                    ? 'bg-orange-600 text-white hover:bg-orange-700'
-                    : 'bg-red-600 text-white hover:bg-red-700'
-                }
-                onClick={() =>
-                  void confirmAction()
-                }
-              >
-                {processingId ? (
-                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                ) : actionDialog.action ===
-                  'return' ? (
-                  <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-                ) : (
-                  <X className="mr-1.5 h-3.5 w-3.5" />
-                )}
-
-                {actionDialog.action ===
-                'return'
-                  ? 'Return for Correction'
-                  : 'Confirm Rejection'}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
+          <DialogFooter className="flex-col-reverse sm:flex-row gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full sm:w-auto"
+              disabled={Boolean(processingId)}
+              onClick={closeActionDialog}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={
+                Boolean(processingId) || actionComments.trim().length < 3
+              }
+              className={cn(
+                'w-full sm:w-auto',
+                actionDialog?.action === 'return'
+                  ? 'bg-orange-600 text-white hover:bg-orange-700'
+                  : 'bg-red-600 text-white hover:bg-red-700'
+              )}
+              onClick={() => void confirmAction()}
+            >
+              {processingId ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : actionDialog?.action === 'return' ? (
+                <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
+              ) : (
+                <X className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              {actionDialog?.action === 'return'
+                ? 'Return for Correction'
+                : 'Confirm Rejection'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

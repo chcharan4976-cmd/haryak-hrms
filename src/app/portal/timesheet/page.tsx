@@ -91,6 +91,12 @@ type TimesheetEntry = {
   description: string
   hours: number
   isBillable: boolean
+  isLeave?: boolean
+  leaveTypeId?: string | null
+  leaveTypeName?: string | null
+  leaveTypeCode?: string | null
+  leaveReason?: string | null
+  isPaid?: boolean | null
 }
 
 type LeaveType = {
@@ -434,6 +440,33 @@ export default function EmployeeTimesheetPortalPage() {
     setApplyingLeave,
   ] = useState(false)
 
+  const [
+    showSubmitConfirm,
+    setShowSubmitConfirm,
+  ] = useState(false)
+
+  const [
+    annualLeaveSummary,
+    setAnnualLeaveSummary,
+  ] = useState<{
+    annualEntitlement: number
+    paidLeaveUsed: number
+    paidLeaveRemaining: number
+    unpaidLeaveLop: number
+    companyHolidaysCount: number
+  }>({
+    annualEntitlement: 11,
+    paidLeaveUsed: 0,
+    paidLeaveRemaining: 11,
+    unpaidLeaveLop: 0,
+    companyHolidaysCount: 0,
+  })
+
+  const [
+    compensationLedger,
+    setCompensationLedger,
+  ] = useState<any>(null)
+
   /* ============================================================
      MONTH MODEL
      ============================================================ */
@@ -636,6 +669,7 @@ export default function EmployeeTimesheetPortalPage() {
             leaveTypesResponse,
             leaveResponse,
             holidayResponse,
+            balancesResponse,
           ] =
             await Promise.all([
               fetch(
@@ -656,6 +690,14 @@ export default function EmployeeTimesheetPortalPage() {
 
               fetch(
                 `/api/holidays?year=${selectedYear}`,
+                {
+                  cache:
+                    'no-store',
+                }
+              ),
+
+              fetch(
+                `/api/leave/balances?year=${selectedYear}`,
                 {
                   cache:
                     'no-store',
@@ -885,6 +927,22 @@ export default function EmployeeTimesheetPortalPage() {
                     )
                 )
             )
+          }
+
+          if (balancesResponse.ok) {
+            const balResult = await balancesResponse.json()
+            if (balResult.summary) {
+              setAnnualLeaveSummary({
+                annualEntitlement: Number(balResult.summary.annualEntitlement ?? 11),
+                paidLeaveUsed: Number(balResult.summary.paidLeaveUsed ?? 0),
+                paidLeaveRemaining: Number(balResult.summary.paidLeaveRemaining ?? 11),
+                unpaidLeaveLop: Number(balResult.summary.unpaidLeaveLop ?? 0),
+                companyHolidaysCount: Number(balResult.summary.companyHolidaysCount ?? 0),
+              })
+            }
+            if (balResult.compensation_ledger) {
+              setCompensationLedger(balResult.compensation_ledger)
+            }
           }
         } catch (
           error
@@ -1218,11 +1276,18 @@ export default function EmployeeTimesheetPortalPage() {
                 entry.entryDate
               )
 
+            const isLeave =
+              entry.isLeave === true ||
+              entry.taskCategory === 'Leave' ||
+              (typeof entry.description === 'string' &&
+                entry.description.startsWith('[LEAVE|'))
+
             if (
               date &&
               workingDateStrings.has(
                 date
               ) &&
+              !isLeave &&
               Number(
                 entry.hours ||
                   0
@@ -1243,13 +1308,139 @@ export default function EmployeeTimesheetPortalPage() {
       ]
     )
 
-  const resolvedWorkingDateSet =
+  const timesheetLeaveDateSet =
     useMemo(
       () => {
         const result =
           new Set<string>()
 
-        completedWorkDateSet.forEach(
+        entries.forEach(
+          entry => {
+            const isLeave =
+              entry.isLeave === true ||
+              entry.taskCategory === 'Leave' ||
+              (typeof entry.description === 'string' &&
+                entry.description.startsWith('[LEAVE|'))
+
+            if (isLeave) {
+              const date =
+                normalizeDateOnly(
+                  entry.entryDate
+                )
+
+              if (
+                date &&
+                workingDateStrings.has(
+                  date
+                )
+              ) {
+                result.add(
+                  date
+                )
+              }
+            }
+          }
+        )
+
+        return result
+      },
+      [
+        entries,
+        workingDateStrings,
+      ]
+    )
+
+  const timesheetPaidLeaveDateSet =
+    useMemo(
+      () => {
+        const result =
+          new Set<string>()
+
+        entries.forEach(
+          entry => {
+            const isLeave =
+              entry.isLeave === true ||
+              entry.taskCategory === 'Leave' ||
+              (typeof entry.description === 'string' &&
+                entry.description.startsWith('[LEAVE|'))
+
+            if (isLeave && entry.isPaid !== false) {
+              const date =
+                normalizeDateOnly(
+                  entry.entryDate
+                )
+
+              if (
+                date &&
+                workingDateStrings.has(
+                  date
+                )
+              ) {
+                result.add(
+                  date
+                )
+              }
+            }
+          }
+        )
+
+        return result
+      },
+      [
+        entries,
+        workingDateStrings,
+      ]
+    )
+
+  const timesheetUnpaidLeaveDateSet =
+    useMemo(
+      () => {
+        const result =
+          new Set<string>()
+
+        entries.forEach(
+          entry => {
+            const isLeave =
+              entry.isLeave === true ||
+              entry.taskCategory === 'Leave' ||
+              (typeof entry.description === 'string' &&
+                entry.description.startsWith('[LEAVE|'))
+
+            if (isLeave && entry.isPaid === false) {
+              const date =
+                normalizeDateOnly(
+                  entry.entryDate
+                )
+
+              if (
+                date &&
+                workingDateStrings.has(
+                  date
+                )
+              ) {
+                result.add(
+                  date
+                )
+              }
+            }
+          }
+        )
+
+        return result
+      },
+      [
+        entries,
+        workingDateStrings,
+      ]
+    )
+
+  const allLeaveDateSet =
+    useMemo(
+      () => {
+        const result =
+          new Set<string>()
+
+        timesheetLeaveDateSet.forEach(
           date =>
             result.add(
               date
@@ -1266,8 +1457,36 @@ export default function EmployeeTimesheetPortalPage() {
         return result
       },
       [
-        completedWorkDateSet,
+        timesheetLeaveDateSet,
         approvedLeaveDateSet,
+      ]
+    )
+
+  const resolvedWorkingDateSet =
+    useMemo(
+      () => {
+        const result =
+          new Set<string>()
+
+        completedWorkDateSet.forEach(
+          date =>
+            result.add(
+              date
+            )
+        )
+
+        allLeaveDateSet.forEach(
+          date =>
+            result.add(
+              date
+            )
+        )
+
+        return result
+      },
+      [
+        completedWorkDateSet,
+        allLeaveDateSet,
       ]
     )
 
@@ -1289,7 +1508,7 @@ export default function EmployeeTimesheetPortalPage() {
   const expectedHours =
     Math.max(
       workingDays -
-        approvedLeaveDateSet.size,
+        allLeaveDateSet.size,
       0
     ) * 8
 
@@ -1988,157 +2207,196 @@ export default function EmployeeTimesheetPortalPage() {
       setLeaveReason('')
     }
 
-  const applyLeaveFromTimesheet =
-    async () => {
-      if (
-        !leaveDialogDate ||
-        !selectedLeaveTypeId
-      ) {
-        toast.error(
-          'Select a leave type.'
-        )
-
-        return
-      }
-
-      const selectedLeave =
-        leaveTypes.find(
-          item =>
-            item.id ===
-            selectedLeaveTypeId
-        )
-
-      if (!selectedLeave) {
-        toast.error(
-          'The selected leave type is no longer available.'
-        )
-
-        return
-      }
-
-      setApplyingLeave(
-        true
+  const applyLeaveFromTimesheet = () => {
+    if (
+      !leaveDialogDate ||
+      !selectedLeaveTypeId
+    ) {
+      toast.error(
+        'Select a leave type.'
       )
 
-      try {
-        const response =
-          await fetch(
-            '/api/leave',
-            {
-              method:
-                'POST',
-
-              headers: {
-                'Content-Type':
-                  'application/json',
-              },
-
-              body:
-                JSON.stringify(
-                  {
-                    leaveTypeId:
-                      selectedLeave.id,
-
-                    startDate:
-                      leaveDialogDate,
-
-                    endDate:
-                      leaveDialogDate,
-
-                    reason:
-                      leaveReason.trim() ||
-                      `Leave requested from timesheet for ${formatLongDate(
-                        leaveDialogDate
-                      )}`,
-                  }
-                ),
-            }
-          )
-
-        const result =
-          await response.json()
-
-        if (
-          !response.ok ||
-          !result.success
-        ) {
-          throw new Error(
-            result.error ||
-              'Unable to submit leave request.'
-          )
-        }
-
-        toast.success(
-          'Leave request submitted for approval.'
-        )
-
-        closeLeaveDialog()
-
-        await fetchSupportingCalendarData()
-      } catch (
-        error: any
-      ) {
-        toast.error(
-          error?.message ||
-            'Unable to submit leave request.'
-        )
-      } finally {
-        setApplyingLeave(
-          false
-        )
-      }
+      return
     }
+
+    // Company Calendar public holidays are paid company holidays and must never consume annual leave
+    if (holidayDateSet.has(leaveDialogDate)) {
+      toast.info(
+        'This date is an official Company Paid Holiday. Public holidays are already paid and do not consume your 11 annual paid leave days.'
+      )
+      closeLeaveDialog()
+      return
+    }
+
+    const selectedLeave =
+      leaveTypes.find(
+        item =>
+          item.id ===
+          selectedLeaveTypeId
+      )
+
+    if (!selectedLeave) {
+      toast.error(
+        'The selected leave type is no longer available.'
+      )
+
+      return
+    }
+
+    // Calculate how many paid leave days are already marked in the current timesheet (excluding this date)
+    const otherTimesheetPaidCount = entries.filter(
+      e => e.isLeave && e.isPaid && normalizeDateOnly(e.entryDate) !== leaveDialogDate
+    ).length
+
+    // Available remaining balance from annual entitlement of 11 days
+    const availablePaidRemaining = Math.max(0, annualLeaveSummary.paidLeaveRemaining - otherTimesheetPaidCount)
+    const isEligibleForYearEndCompensation = availablePaidRemaining > 0
+    const code = isEligibleForYearEndCompensation ? (selectedLeave.code || 'LV') : 'LOP'
+    const name = isEligibleForYearEndCompensation
+      ? `${selectedLeave.name} (Monthly Deductible, Year-End Compensation Eligible)`
+      : `${selectedLeave.name} (Monthly Deductible, Non-Compensable)`
+
+    const trimmedReason =
+      leaveReason.trim()
+
+    // Working-day leaves are initially deducted from monthly salary under company policy
+    const description =
+      trimmedReason
+        ? `[LEAVE|id:${selectedLeave.id}|code:${code}|name:${name}|paid:0] ${trimmedReason}`
+        : `[LEAVE|id:${selectedLeave.id}|code:${code}|name:${name}|paid:0] Leave: ${name}`
+
+    const leaveEntry: TimesheetEntry = {
+      entryDate:
+        leaveDialogDate,
+
+      projectName:
+        'Leave',
+
+      taskCategory:
+        'Leave',
+
+      description,
+
+      hours: 0,
+
+      isBillable:
+        false,
+
+      isLeave:
+        true,
+
+      leaveTypeId:
+        selectedLeave.id,
+
+      leaveTypeName:
+        name,
+
+      leaveTypeCode:
+        code,
+
+      leaveReason:
+        trimmedReason || undefined,
+
+      isPaid: false, // Deducted in current month's payroll
+    }
+
+    // Replace any existing entries for this date with the leave entry
+    setEntries(current => [
+      ...current.filter(
+        entry =>
+          normalizeDateOnly(
+            entry.entryDate
+          ) !== leaveDialogDate
+      ),
+      leaveEntry,
+    ])
+
+    if (isEligibleForYearEndCompensation) {
+      toast.success(
+        `Marked as Leave (Deducted monthly; eligible for year-end compensation, ${availablePaidRemaining - 1}/11 remaining).`
+      )
+    } else {
+      toast.warning(
+        'Marked as Loss of Pay (LOP) (Annual 11-day compensation limit reached; monthly deductible, non-compensable).'
+      )
+    }
+
+    closeLeaveDialog()
+  }
+
+  const handleClearLeave = (date: string) => {
+    if (!editable) {
+      return
+    }
+
+    setEntries(current =>
+      current.filter(
+        entry =>
+          normalizeDateOnly(
+            entry.entryDate
+          ) !== date
+      )
+    )
+
+    toast.info(
+      `Cleared leave entry for ${formatShortDate(date)}.`
+    )
+  }
 
   /* ============================================================
      SAVE / SUBMIT
      ============================================================ */
 
-  const validateEntries =
-    () => {
-      for (
-        const entry of entries
+  const validateEntries = () => {
+    for (const entry of entries) {
+      const date =
+        normalizeDateOnly(
+          entry.entryDate
+        )
+
+      if (!date) {
+        toast.error(
+          'One or more entries have an invalid date.'
+        )
+
+        return false
+      }
+
+      if (
+        holidayDateSet.has(
+          date
+        )
       ) {
-        const date =
-          normalizeDateOnly(
-            entry.entryDate
-          )
-
-        if (!date) {
-          toast.error(
-            'One or more work entries have an invalid date.'
-          )
-
-          return false
-        }
-
-        if (
-          holidayDateSet.has(
+        toast.error(
+          `Remove the entry for ${formatLongDate(
             date
-          )
-        ) {
-          toast.error(
-            `Remove the work entry for ${formatLongDate(
-              date
-            )}. It is a company holiday.`
-          )
+          )}. It is a company holiday.`
+        )
 
-          return false
-        }
+        return false
+      }
 
-        if (
-          !workingDateStrings.has(
+      if (
+        !workingDateStrings.has(
+          date
+        )
+      ) {
+        toast.error(
+          `Entry cannot be recorded for ${formatLongDate(
             date
-          )
-        ) {
-          toast.error(
-            `Work cannot be entered for ${formatLongDate(
-              date
-            )} because it is not a working date.`
-          )
+          )} because it is not a working date.`
+        )
 
-          return false
-        }
+        return false
+      }
 
+      const isLeaveEntry =
+        entry.isLeave === true ||
+        entry.taskCategory === 'Leave' ||
+        (typeof entry.description === 'string' &&
+          entry.description.startsWith('[LEAVE|'))
+
+      if (!isLeaveEntry) {
         const leave =
           leaveForDate(
             date
@@ -2188,10 +2446,40 @@ export default function EmployeeTimesheetPortalPage() {
 
           return false
         }
-      }
+      } else {
+        if (
+          !entry.description?.trim()
+        ) {
+          toast.error(
+            `Add a description for leave on ${formatLongDate(
+              date
+            )}.`
+          )
 
-      return true
+          return false
+        }
+
+        if (
+          Number(
+            entry.hours
+          ) < 0 ||
+          Number(
+            entry.hours
+          ) > 24
+        ) {
+          toast.error(
+            `Invalid hours for leave on ${formatLongDate(
+              date
+            )}.`
+          )
+
+          return false
+        }
+      }
     }
+
+    return true
+  }
 
   const saveDraft =
     async () => {
@@ -2282,28 +2570,11 @@ export default function EmployeeTimesheetPortalPage() {
       }
     }
 
-  const submitTimesheet =
+  const doSubmitTimesheet =
     async () => {
-      if (!editable) {
-        return
-      }
-
-      if (
-        entries.length ===
-        0
-      ) {
-        toast.error(
-          'Add at least one work entry before submitting.'
-        )
-
-        return
-      }
-
-      if (
-        !validateEntries()
-      ) {
-        return
-      }
+      setShowSubmitConfirm(
+        false
+      )
 
       setSubmitting(
         true
@@ -2344,7 +2615,7 @@ export default function EmployeeTimesheetPortalPage() {
                       ),
 
                     action:
-                      'SUBMIT',
+                      'submit',
                   }
                 ),
             }
@@ -2382,6 +2653,33 @@ export default function EmployeeTimesheetPortalPage() {
       }
     }
 
+  const submitTimesheet = () => {
+    if (!editable) {
+      return
+    }
+
+    if (
+      entries.length ===
+      0
+    ) {
+      toast.error(
+        'Add at least one entry before submitting.'
+      )
+
+      return
+    }
+
+    if (
+      !validateEntries()
+    ) {
+      return
+    }
+
+    setShowSubmitConfirm(
+      true
+    )
+  }
+
   /* ============================================================
      LOADING
      ============================================================ */
@@ -2411,7 +2709,7 @@ export default function EmployeeTimesheetPortalPage() {
          ===================================================== */}
 
       <div className="overflow-hidden rounded-2xl border border-[#1e2a78]/20 bg-gradient-to-r from-[#101b5c] via-[#1e2a78] to-[#273b9b] text-white shadow-sm">
-        <div className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
               <CalendarDays className="h-5 w-5" />
@@ -2436,7 +2734,7 @@ export default function EmployeeTimesheetPortalPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
             <Button
               type="button"
               variant="secondary"
@@ -2462,7 +2760,7 @@ export default function EmployeeTimesheetPortalPage() {
                 <ChevronLeft className="h-4 w-4" />
               </button>
 
-              <div className="min-w-[150px] border-x border-white/20 px-4 text-center text-sm font-semibold">
+              <div className="min-w-[130px] sm:min-w-[150px] border-x border-white/20 px-3 sm:px-4 text-center text-xs sm:text-sm font-semibold">
                 {
                   MONTHS[
                     selectedMonth -
@@ -2525,10 +2823,31 @@ export default function EmployeeTimesheetPortalPage() {
       )}
 
       {/* =====================================================
+          ANNUAL PAID-LEAVE COMPENSATION & COMPANY HOLIDAY BANNER
+         ===================================================== */}
+
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 sm:px-4 text-xs dark:border-blue-900/60 dark:bg-blue-950/20">
+        <div className="flex items-center gap-2.5">
+          <Palmtree className="h-4 w-4 text-[#1e2a78] dark:text-blue-400 shrink-0" />
+          <div className="text-foreground">
+            <span className="font-semibold text-[#1e2a78] dark:text-blue-300">Annual Paid-Leave Compensation: </span>
+            <span>
+              {compensationLedger?.eligibleCompensationDays ?? annualLeaveSummary.paidLeaveUsed} of 11 days eligible for year-end reimbursement
+              {compensationLedger?.totalDeductionsAmount ? ` (₹${compensationLedger.totalDeductionsAmount.toLocaleString('en-IN')} deducted so far)` : ''}
+            </span>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 text-muted-foreground">
+          <CalendarDays className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+          <span>{annualLeaveSummary.companyHolidaysCount} Company Holidays (Paid, never deducted)</span>
+        </div>
+      </div>
+
+      {/* =====================================================
           SUMMARY
          ===================================================== */}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <SummaryCard
           label="Working Days"
           value={
@@ -2537,9 +2856,30 @@ export default function EmployeeTimesheetPortalPage() {
         />
 
         <SummaryCard
+          label="Workdays Worked"
+          value={
+            completedWorkDateSet.size
+          }
+        />
+
+        <SummaryCard
+          label="Leave Days"
+          value={
+            <div>
+              <span>
+                {allLeaveDateSet.size}
+              </span>
+              <span className="block text-[10px] font-normal text-muted-foreground">
+                {timesheetPaidLeaveDateSet.size} Paid • {timesheetUnpaidLeaveDateSet.size} LOP
+              </span>
+            </div>
+          }
+        />
+
+        <SummaryCard
           label="Resolved Days"
           value={
-            completedDays
+            `${completedDays} / ${workingDays}`
           }
         />
 
@@ -2547,15 +2887,6 @@ export default function EmployeeTimesheetPortalPage() {
           label="Total Hours"
           value={
             totalHours.toFixed(
-              1
-            )
-          }
-        />
-
-        <SummaryCard
-          label="Billable Hours"
-          value={
-            billableHours.toFixed(
               1
             )
           }
@@ -2870,6 +3201,18 @@ export default function EmployeeTimesheetPortalPage() {
                               )
                             : ''
 
+                        const timesheetLeaveEntry =
+                          dayEntries.find(
+                            item =>
+                              item.entry.isLeave === true ||
+                              item.entry.taskCategory === 'Leave' ||
+                              (typeof item.entry.description === 'string' &&
+                                item.entry.description.startsWith('[LEAVE|'))
+                          )?.entry
+
+                        const isTimesheetLeave =
+                          Boolean(timesheetLeaveEntry)
+
                         const hasApprovedLeave =
                           leaveStatus ===
                           'APPROVED'
@@ -2886,7 +3229,8 @@ export default function EmployeeTimesheetPortalPage() {
                           isHoliday ||
                           dayHours >
                             0 ||
-                          hasApprovedLeave
+                          hasApprovedLeave ||
+                          isTimesheetLeave
 
                         return (
                           <div
@@ -2936,6 +3280,13 @@ export default function EmployeeTimesheetPortalPage() {
                               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-background/80">
                                 {isHoliday ? (
                                   <CalendarOff className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
+                                ) : isTimesheetLeave ? (
+                                  <Palmtree className={cn(
+                                    "h-3.5 w-3.5",
+                                    timesheetLeaveEntry?.isPaid !== false
+                                      ? "text-emerald-600"
+                                      : "text-amber-600"
+                                  )} />
                                 ) : dayHours >
                                   0 ? (
                                   <BriefcaseBusiness className="h-3.5 w-3.5 text-emerald-600" />
@@ -2958,14 +3309,23 @@ export default function EmployeeTimesheetPortalPage() {
                                     'text-blue-700 dark:text-blue-300',
 
                                   !isHoliday &&
+                                    isTimesheetLeave &&
+                                    (timesheetLeaveEntry?.isPaid !== false
+                                      ? 'text-emerald-700 dark:text-emerald-300'
+                                      : 'text-amber-700 dark:text-amber-300'),
+
+                                  !isHoliday &&
+                                    !isTimesheetLeave &&
                                     hasApprovedLeave &&
                                     'text-emerald-700 dark:text-emerald-300',
 
                                   !isHoliday &&
+                                    !isTimesheetLeave &&
                                     hasPendingLeave &&
                                     'text-amber-700 dark:text-amber-300',
 
                                   !isHoliday &&
+                                    !isTimesheetLeave &&
                                     !hasApprovedLeave &&
                                     !hasPendingLeave &&
                                     dayHours ===
@@ -2978,6 +3338,15 @@ export default function EmployeeTimesheetPortalPage() {
                                       holiday?.name ||
                                       'Company Holiday'
                                     } • Holiday`
+                                  : isTimesheetLeave
+                                  ? `${
+                                      timesheetLeaveEntry?.leaveTypeName ||
+                                      'Leave'
+                                    } • ${
+                                      timesheetLeaveEntry?.isPaid !== false
+                                        ? 'Paid'
+                                        : 'Unpaid / LOP'
+                                    }`
                                   : dayHours >
                                     0
                                   ? `${dayHours.toFixed(
@@ -2997,10 +3366,12 @@ export default function EmployeeTimesheetPortalPage() {
                               </p>
 
                               {!isHoliday &&
-                                leave?.reason && (
+                                (timesheetLeaveEntry?.leaveReason ||
+                                  leave?.reason) && (
                                   <p className="mt-1 line-clamp-1 text-[10px] text-muted-foreground">
                                     {
-                                      leave.reason
+                                      timesheetLeaveEntry?.leaveReason ||
+                                      leave?.reason
                                     }
                                   </p>
                                 )}
@@ -3012,6 +3383,28 @@ export default function EmployeeTimesheetPortalPage() {
 
                             {editable &&
                               !isHoliday &&
+                              isTimesheetLeave && (
+                                <div className="mt-3">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-7 w-full px-2 text-[10px] text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                                    onClick={() =>
+                                      handleClearLeave(
+                                        iso
+                                      )
+                                    }
+                                  >
+                                    <Trash2 className="mr-1 h-3 w-3" />
+                                    Clear Leave
+                                  </Button>
+                                </div>
+                              )}
+
+                            {editable &&
+                              !isHoliday &&
+                              !isTimesheetLeave &&
                               dayHours ===
                                 0 &&
                               !leave && (
@@ -3099,9 +3492,9 @@ export default function EmployeeTimesheetPortalPage() {
                       </p>
                     </div>
                   ) : (
-                    <div className="overflow-x-auto rounded-xl border">
-                      <table className="w-full min-w-[900px] text-xs">
-                        <thead className="bg-muted/40">
+                    <div className="relative w-full overflow-x-auto rounded-xl border">
+                      <table className="w-full min-w-[760px] text-xs">
+                        <thead className="border-b bg-muted/30">
                           <tr>
                             <th className="w-[115px] px-3 py-2 text-left font-semibold">
                               Date
@@ -3172,191 +3565,263 @@ export default function EmployeeTimesheetPortalPage() {
                                   </div>
                                 </td>
 
-                                <td className="px-3 py-2">
-                                  {editable ? (
-                                    <Input
-                                      className="h-8 text-xs"
-                                      placeholder="Project / Client"
-                                      value={
-                                        entry.projectName
-                                      }
-                                      onChange={
-                                        event =>
-                                          updateEntry(
-                                            index,
-                                            'projectName',
-                                            event
-                                              .target
-                                              .value
-                                          )
-                                      }
-                                    />
-                                  ) : (
-                                    entry.projectName ||
-                                    '—'
-                                  )}
-                                </td>
+                                {(() => {
+                                  const isLeaveRow =
+                                    entry.isLeave === true ||
+                                    entry.taskCategory === 'Leave' ||
+                                    (typeof entry.description === 'string' &&
+                                      entry.description.startsWith('[LEAVE|'))
 
-                                <td className="px-3 py-2">
-                                  {editable ? (
-                                    <Select
-                                      value={
-                                        entry.taskCategory ||
-                                        'Development'
-                                      }
-                                      onValueChange={
-                                        value =>
-                                          updateEntry(
-                                            index,
-                                            'taskCategory',
-                                            value
-                                          )
-                                      }
-                                    >
-                                      <SelectTrigger className="h-8 text-xs">
-                                        <SelectValue />
-                                      </SelectTrigger>
+                                  if (isLeaveRow) {
+                                    return (
+                                      <>
+                                        <td className="px-3 py-2">
+                                          <span className="inline-flex items-center gap-1 font-semibold text-blue-700 dark:text-blue-300">
+                                            <Palmtree className="h-3 w-3" />
+                                            Leave
+                                          </span>
+                                        </td>
 
-                                      <SelectContent>
-                                        {TASK_CATEGORIES.map(
-                                          category => (
-                                            <SelectItem
-                                              key={
-                                                category
-                                              }
-                                              value={
-                                                category
+                                        <td className="px-3 py-2">
+                                          <Badge
+                                            variant="outline"
+                                            className="text-[10px]"
+                                          >
+                                            {entry.leaveTypeName ||
+                                              'Leave'}
+                                          </Badge>
+                                        </td>
+
+                                        <td className="px-3 py-2">
+                                          <span className="text-xs text-muted-foreground">
+                                            {entry.leaveReason ||
+                                              entry.leaveTypeName ||
+                                              'Leave entry'}
+                                          </span>
+                                        </td>
+
+                                        <td className="px-3 py-2 text-right font-mono text-xs text-muted-foreground">
+                                          0.0
+                                        </td>
+
+                                        <td className="px-3 py-2 text-center text-muted-foreground">
+                                          —
+                                        </td>
+
+                                        {editable && (
+                                          <td className="px-3 py-2">
+                                            <div className="flex justify-end gap-1">
+                                              <Button
+                                                type="button"
+                                                size="icon"
+                                                variant="ghost"
+                                                className="h-7 w-7 text-rose-600"
+                                                title="Remove leave entry"
+                                                onClick={() =>
+                                                  removeEntry(
+                                                    index
+                                                  )
+                                                }
+                                              >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                              </Button>
+                                            </div>
+                                          </td>
+                                        )}
+                                      </>
+                                    )
+                                  }
+
+                                  return (
+                                    <>
+                                      <td className="px-3 py-2">
+                                        {editable ? (
+                                          <Input
+                                            className="h-8 text-xs"
+                                            placeholder="Project / Client"
+                                            value={
+                                              entry.projectName
+                                            }
+                                            onChange={
+                                              event =>
+                                                updateEntry(
+                                                  index,
+                                                  'projectName',
+                                                  event
+                                                    .target
+                                                    .value
+                                                )
+                                            }
+                                          />
+                                        ) : (
+                                          entry.projectName ||
+                                          '—'
+                                        )}
+                                      </td>
+
+                                      <td className="px-3 py-2">
+                                        {editable ? (
+                                          <Select
+                                            value={
+                                              entry.taskCategory ||
+                                              'Development'
+                                            }
+                                            onValueChange={
+                                              value =>
+                                                updateEntry(
+                                                  index,
+                                                  'taskCategory',
+                                                  value
+                                                )
+                                            }
+                                          >
+                                            <SelectTrigger className="h-8 text-xs">
+                                              <SelectValue />
+                                            </SelectTrigger>
+
+                                            <SelectContent>
+                                              {TASK_CATEGORIES.map(
+                                                category => (
+                                                  <SelectItem
+                                                    key={
+                                                      category
+                                                    }
+                                                    value={
+                                                      category
+                                                    }
+                                                  >
+                                                    {
+                                                      category
+                                                    }
+                                                  </SelectItem>
+                                                )
+                                              )}
+                                            </SelectContent>
+                                          </Select>
+                                        ) : (
+                                          entry.taskCategory ||
+                                          '—'
+                                        )}
+                                      </td>
+
+                                      <td className="px-3 py-2">
+                                        {editable ? (
+                                          <Input
+                                            className="h-8 min-w-[250px] text-xs"
+                                            placeholder="What did you work on?"
+                                            value={
+                                              entry.description
+                                            }
+                                            onChange={
+                                              event =>
+                                                updateEntry(
+                                                  index,
+                                                  'description',
+                                                  event
+                                                    .target
+                                                    .value
+                                                )
+                                            }
+                                          />
+                                        ) : (
+                                          entry.description ||
+                                          'Not provided'
+                                        )}
+                                      </td>
+
+                                      <td className="px-3 py-2">
+                                        {editable ? (
+                                          <Input
+                                            type="number"
+                                            step="0.5"
+                                            min="0.5"
+                                            max="24"
+                                            className="ml-auto h-8 w-20 text-right font-mono text-xs"
+                                            value={
+                                              entry.hours
+                                            }
+                                            onChange={
+                                              event =>
+                                                updateEntry(
+                                                  index,
+                                                  'hours',
+                                                  Number(
+                                                    event
+                                                      .target
+                                                      .value
+                                                  )
+                                                )
+                                            }
+                                          />
+                                        ) : (
+                                          <div className="text-right font-mono font-bold">
+                                            {
+                                              entry.hours
+                                            }
+                                          </div>
+                                        )}
+                                      </td>
+
+                                      <td className="px-3 py-2 text-center">
+                                        <Checkbox
+                                          checked={
+                                            entry.isBillable !==
+                                            false
+                                          }
+                                          disabled={
+                                            !editable
+                                          }
+                                          onCheckedChange={
+                                            checked =>
+                                              updateEntry(
+                                                index,
+                                                'isBillable',
+                                                Boolean(
+                                                  checked
+                                                )
+                                              )
+                                          }
+                                        />
+                                      </td>
+
+                                      {editable && (
+                                        <td className="px-3 py-2">
+                                          <div className="flex justify-end gap-1">
+                                            <Button
+                                              type="button"
+                                              size="icon"
+                                              variant="ghost"
+                                              className="h-7 w-7"
+                                              title="Copy previous day's work"
+                                              onClick={() =>
+                                                copyPreviousDay(
+                                                  index
+                                                )
                                               }
                                             >
-                                              {
-                                                category
+                                              <Copy className="h-3.5 w-3.5" />
+                                            </Button>
+
+                                            <Button
+                                              type="button"
+                                              size="icon"
+                                              variant="ghost"
+                                              className="h-7 w-7 text-rose-600"
+                                              title="Delete entry"
+                                              onClick={() =>
+                                                removeEntry(
+                                                  index
+                                                )
                                               }
-                                            </SelectItem>
-                                          )
-                                        )}
-                                      </SelectContent>
-                                    </Select>
-                                  ) : (
-                                    entry.taskCategory ||
-                                    '—'
-                                  )}
-                                </td>
-
-                                <td className="px-3 py-2">
-                                  {editable ? (
-                                    <Input
-                                      className="h-8 min-w-[250px] text-xs"
-                                      placeholder="What did you work on?"
-                                      value={
-                                        entry.description
-                                      }
-                                      onChange={
-                                        event =>
-                                          updateEntry(
-                                            index,
-                                            'description',
-                                            event
-                                              .target
-                                              .value
-                                          )
-                                      }
-                                    />
-                                  ) : (
-                                    entry.description ||
-                                    'Not provided'
-                                  )}
-                                </td>
-
-                                <td className="px-3 py-2">
-                                  {editable ? (
-                                    <Input
-                                      type="number"
-                                      step="0.5"
-                                      min="0.5"
-                                      max="24"
-                                      className="ml-auto h-8 w-20 text-right font-mono text-xs"
-                                      value={
-                                        entry.hours
-                                      }
-                                      onChange={
-                                        event =>
-                                          updateEntry(
-                                            index,
-                                            'hours',
-                                            Number(
-                                              event
-                                                .target
-                                                .value
-                                            )
-                                          )
-                                      }
-                                    />
-                                  ) : (
-                                    <div className="text-right font-mono font-bold">
-                                      {
-                                        entry.hours
-                                      }
-                                    </div>
-                                  )}
-                                </td>
-
-                                <td className="px-3 py-2 text-center">
-                                  <Checkbox
-                                    checked={
-                                      entry.isBillable !==
-                                      false
-                                    }
-                                    disabled={
-                                      !editable
-                                    }
-                                    onCheckedChange={
-                                      checked =>
-                                        updateEntry(
-                                          index,
-                                          'isBillable',
-                                          Boolean(
-                                            checked
-                                          )
-                                        )
-                                    }
-                                  />
-                                </td>
-
-                                {editable && (
-                                  <td className="px-3 py-2">
-                                    <div className="flex justify-end gap-1">
-                                      <Button
-                                        type="button"
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-7 w-7"
-                                        title="Copy previous day's work"
-                                        onClick={() =>
-                                          copyPreviousDay(
-                                            index
-                                          )
-                                        }
-                                      >
-                                        <Copy className="h-3.5 w-3.5" />
-                                      </Button>
-
-                                      <Button
-                                        type="button"
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-7 w-7 text-rose-600"
-                                        title="Delete entry"
-                                        onClick={() =>
-                                          removeEntry(
-                                            index
-                                          )
-                                        }
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </div>
-                                  </td>
-                                )}
+                                            >
+                                              <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
+                                          </div>
+                                        </td>
+                                      )}
+                                    </>
+                                  )
+                                })()}
                               </tr>
                             )
                           )}
@@ -3390,7 +3855,7 @@ export default function EmployeeTimesheetPortalPage() {
                 entries.length >
                 0
               }
-              label="Work entries added"
+              label="Entries recorded"
             />
 
             <ValidationItem
@@ -3409,12 +3874,14 @@ export default function EmployeeTimesheetPortalPage() {
               ok={
                 entries.every(
                   entry =>
+                    entry.isLeave ||
+                    entry.taskCategory === 'Leave' ||
                     Number(
                       entry.hours
                     ) > 0
                 )
               }
-              label="Hours valid"
+              label="Hours / Leave valid"
             />
 
             <ValidationItem
@@ -3655,14 +4122,14 @@ export default function EmployeeTimesheetPortalPage() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>
-              Apply Leave from Timesheet
+              Mark Leave in Timesheet
             </DialogTitle>
 
             <DialogDescription>
               {leaveDialogDate
-                ? `Create a leave request for ${formatLongDate(
+                ? `Record leave for ${formatLongDate(
                     leaveDialogDate
-                  )}. The day becomes approved leave/LOP only after the normal leave approval workflow.`
+                  )}. This entry is saved directly into your timesheet and submitted for approval with the entire month.`
                 : ''}
             </DialogDescription>
           </DialogHeader>
@@ -3728,7 +4195,7 @@ export default function EmployeeTimesheetPortalPage() {
 
             <div className="space-y-2">
               <Label htmlFor="timesheet-leave-reason">
-                Reason
+                Reason (Optional)
               </Label>
 
               <Input
@@ -3747,20 +4214,34 @@ export default function EmployeeTimesheetPortalPage() {
               />
             </div>
 
-            <Alert>
-              <AlertTriangle className="h-4 w-4" />
-
-              <AlertDescription>
-                Applying leave here
-                creates a real leave
-                request. It does not
-                auto-approve the day.
-                Payroll uses the final
-                approved Leave record
-                to decide paid leave
-                versus LOP.
-              </AlertDescription>
-            </Alert>
+            {leaveDialogDate && holidayDateSet.has(leaveDialogDate) ? (
+              <Alert className="border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+                <CalendarDays className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                <AlertDescription className="text-xs">
+                  This date is an official <strong>Company Paid Holiday</strong>. Public holidays are paid non-working days and are never deducted from your salary. You do not need to mark leave.
+                </AlertDescription>
+              </Alert>
+            ) : (
+              <Alert className="border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+                <Palmtree className="h-4 w-4 text-[#1e2a78] dark:text-blue-400 shrink-0" />
+                <AlertDescription className="text-xs space-y-1">
+                  <div>
+                    <strong>Monthly Salary Deduction:</strong> This leave will initially be deducted in this month&apos;s salary at the canonical daily rate (<em>Monthly Gross ÷ Working Days</em>).
+                  </div>
+                  <div>
+                    {annualLeaveSummary.paidLeaveRemaining > 0 ? (
+                      <span className="text-emerald-700 dark:text-emerald-300 font-semibold">
+                        ✓ Eligible for Year-End Compensation: You have {annualLeaveSummary.paidLeaveRemaining} of 11 annual compensation days remaining. This deduction will be reimbursed at year-end after audit.
+                      </span>
+                    ) : (
+                      <span className="text-amber-700 dark:text-amber-300 font-semibold">
+                        ⚠ 11-Day Entitlement Exhausted: This leave is non-compensable at year-end.
+                      </span>
+                    )}
+                  </div>
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
 
           <DialogFooter>
@@ -3777,22 +4258,98 @@ export default function EmployeeTimesheetPortalPage() {
             </Button>
 
             <Button
-              onClick={() =>
-                void applyLeaveFromTimesheet()
+              onClick={
+                applyLeaveFromTimesheet
               }
               disabled={
-                applyingLeave ||
                 !selectedLeaveTypeId ||
                 selectedLeaveTypeId ===
                   '__none'
               }
               className="bg-[#1e2a78] text-white hover:bg-[#152060]"
             >
-              {applyingLeave && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
+              Mark as Leave
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-              Submit Leave Request
+      {/* =====================================================
+          PRE-SUBMISSION CONFIRMATION DIALOG
+         ===================================================== */}
+
+      <Dialog
+        open={showSubmitConfirm}
+        onOpenChange={open => {
+          if (!open && !submitting) {
+            setShowSubmitConfirm(false)
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              Submit {MONTHS[selectedMonth - 1]} {selectedYear} Timesheet
+            </DialogTitle>
+            <DialogDescription>
+              Review your monthly summary before submitting to Administration for approval.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 rounded-xl border bg-muted/20 p-4 text-xs">
+            <div className="flex justify-between py-1 border-b">
+              <span className="text-muted-foreground">Scheduled Working Days:</span>
+              <span className="font-semibold">{workingDays} days</span>
+            </div>
+            <div className="flex justify-between py-1 border-b">
+              <span className="text-muted-foreground">Workdays Worked:</span>
+              <span className="font-semibold text-emerald-600">{completedWorkDateSet.size} days</span>
+            </div>
+            <div className="flex justify-between py-1 border-b">
+              <span className="text-muted-foreground">Leave Days:</span>
+              <span className="font-semibold text-blue-600">
+                {allLeaveDateSet.size} days
+                <span className="text-[10px] text-muted-foreground ml-1">
+                  ({timesheetPaidLeaveDateSet.size} Paid, {timesheetUnpaidLeaveDateSet.size} LOP)
+                </span>
+              </span>
+            </div>
+            <div className="flex justify-between py-1 border-b">
+              <span className="text-muted-foreground">Total Resolved Days:</span>
+              <span className="font-semibold">{completedDays} of {workingDays}</span>
+            </div>
+            <div className="flex justify-between py-1 border-b">
+              <span className="text-muted-foreground">Company Holidays:</span>
+              <span className="font-semibold">{holidays.length} days</span>
+            </div>
+            <div className="flex justify-between py-1">
+              <span className="text-muted-foreground">Total Logged Work Hours:</span>
+              <span className="font-semibold">{totalHours.toFixed(1)} hrs ({billableHours.toFixed(1)} billable)</span>
+            </div>
+          </div>
+
+          <Alert className="border-blue-200 bg-blue-50 text-blue-900 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-200">
+            <AlertTriangle className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+            <AlertDescription className="text-xs">
+              Submitting locks this timesheet from editing and sends it to Administration. The entire month, including work and leave entries, will be approved together as a unit.
+            </AlertDescription>
+          </Alert>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowSubmitConfirm(false)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => void doSubmitTimesheet()}
+              disabled={submitting}
+              className="bg-[#1e2a78] text-white hover:bg-[#152060]"
+            >
+              {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirm & Submit to Admin
             </Button>
           </DialogFooter>
         </DialogContent>

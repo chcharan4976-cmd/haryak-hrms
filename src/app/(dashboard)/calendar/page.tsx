@@ -527,7 +527,7 @@ export default function CalendarPage() {
       </section>
 
       {/* Executive holiday summary */}
-      <section className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
         <MetricCard
           icon={<CalendarRange className="h-5 w-5" />}
           eyebrow="Annual Calendar"

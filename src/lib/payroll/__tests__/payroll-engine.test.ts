@@ -294,7 +294,7 @@ describe('Payroll Engine', () => {
 
     const basicEarning = result.earnings.find(e => e.componentCode === 'BASIC')
     // Prorated: 49615 * (18/22) = ~40593
-    const expected = roundAmount(49615 * (18 / 22))
+    const expected = roundAmount(49615 * (18 / 22), 2)
     expect(basicEarning?.finalAmount).toBe(expected)
     expect(result.grossEarnings).toBeLessThan(56958) // Less than full month
   })
@@ -311,7 +311,7 @@ describe('Payroll Engine', () => {
     // Salary should be prorated for 12 out of 22 working days
     expect(result.grossEarnings).toBeLessThan(56958)
     const basicEarning = result.earnings.find(e => e.componentCode === 'BASIC')
-    const expected = roundAmount(49615 * (12 / 22))
+    const expected = roundAmount(49615 * (12 / 22), 2)
     expect(basicEarning?.finalAmount).toBe(expected)
   })
 

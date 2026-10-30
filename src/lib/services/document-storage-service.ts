@@ -233,3 +233,44 @@ export async function retrieveDocumentFileBuffer(storagePath: string): Promise<{
 
   return null
 }
+
+/**
+ * Delete a stored document file from Supabase Storage and local storage fallback
+ */
+export async function deleteDocumentFile(storagePath: string): Promise<boolean> {
+  if (!storagePath || !storagePath.trim()) return false
+
+  let cleanPath = storagePath.trim()
+  if (cleanPath.includes('path=')) {
+    try {
+      cleanPath = decodeURIComponent(cleanPath.split('path=')[1].split('&')[0])
+    } catch {
+      // ignore
+    }
+  }
+  cleanPath = cleanPath
+    .replace(/^\/?api\/documents\/file\?path=/, '')
+    .replace(/^\/?storage\/documents\//, '')
+    .replace(/^\/?documents\//, '')
+
+  const supabase = createAdminClient()
+  if (supabase) {
+    try {
+      await supabase.storage.from('documents').remove([cleanPath])
+    } catch (err) {
+      console.warn('[deleteDocumentFile] Supabase storage removal warning:', err)
+    }
+  }
+
+  try {
+    const localFilePath = path.join(process.cwd(), 'storage', 'documents', cleanPath)
+    if (fs.existsSync(localFilePath)) {
+      fs.unlinkSync(localFilePath)
+    }
+  } catch (localErr) {
+    console.warn('[deleteDocumentFile] Local file removal warning:', localErr)
+  }
+
+  return true
+}
+

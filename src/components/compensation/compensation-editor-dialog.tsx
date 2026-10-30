@@ -915,29 +915,28 @@ export function CompensationEditorDialog({
         }
       }}
     >
-      <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col p-6">
+      <DialogContent className="max-w-4xl w-[calc(100vw-2rem)] max-h-[90vh] flex flex-col p-4 sm:p-6">
         <DialogHeader className="pb-3 border-b">
-          <div className="flex items-start justify-between gap-4 pr-6">
-            <div>
-              <DialogTitle className="text-base font-bold">
+          <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2 sm:gap-4 pr-6">
+            <div className="min-w-0">
+              <DialogTitle className="text-base font-bold truncate">
                 Edit Compensation Structure
               </DialogTitle>
 
-              <DialogDescription className="text-xs">
-                {employeeCode} — {employeeName} | Enterprise
-                Canonical Salary Configuration
+              <DialogDescription className="text-xs break-words">
+                {employeeCode} — {employeeName} | Enterprise Canonical Salary Configuration
               </DialogDescription>
             </div>
 
             {isReconciled ? (
-              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 gap-1 text-[11px]">
+              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 gap-1 text-[11px] shrink-0 self-start">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 Reconciled
               </Badge>
             ) : (
               <Badge
                 variant="destructive"
-                className="gap-1 text-[11px]"
+                className="gap-1 text-[11px] shrink-0 self-start"
               >
                 <AlertCircle className="w-3.5 h-3.5" />
                 Reconciliation Required
@@ -1053,7 +1052,7 @@ export function CompensationEditorDialog({
             defaultValue="earnings"
             className="w-full"
           >
-            <TabsList className="grid grid-cols-2 w-full h-8">
+            <TabsList className="grid grid-cols-1 sm:grid-cols-2 w-full h-auto min-h-8 gap-1 p-1">
               <TabsTrigger
                 value="earnings"
                 className="text-xs"
@@ -1089,7 +1088,7 @@ export function CompensationEditorDialog({
               value="earnings"
               className="mt-3 space-y-2"
             >
-              <div className="flex items-center justify-between gap-3 pb-1">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1">
                 <span className="text-[11px] text-muted-foreground">
                   Configure monthly earning components. Active
                   earnings must total exactly ₹
@@ -1101,14 +1100,15 @@ export function CompensationEditorDialog({
                   variant="outline"
                   size="sm"
                   onClick={addCustomEarning}
-                  className="h-7 text-xs gap-1"
+                  className="h-7 text-xs gap-1 shrink-0 self-start sm:self-auto"
                 >
                   <Plus className="w-3 h-3" />
                   Add Custom Earning
                 </Button>
               </div>
 
-              <div className="border rounded-lg overflow-hidden divide-y">
+              <div className="border rounded-lg overflow-x-auto divide-y max-w-full">
+                <div className="min-w-[560px] divide-y">
                 <div className="grid grid-cols-12 gap-2 p-2 bg-muted/50 font-semibold text-[11px] text-muted-foreground">
                   <div className="col-span-1 text-center">
                     Active
@@ -1223,6 +1223,7 @@ export function CompensationEditorDialog({
                     </div>
                   </div>
                 ))}
+                </div>
               </div>
             </TabsContent>
 
@@ -1230,7 +1231,7 @@ export function CompensationEditorDialog({
               value="deductions"
               className="mt-3 space-y-2"
             >
-              <div className="flex items-center justify-between gap-3 pb-1">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-1">
                 <span className="text-[11px] text-muted-foreground">
                   Configure only deductions applicable to this
                   employee. Disabled deductions are not included.
@@ -1241,14 +1242,15 @@ export function CompensationEditorDialog({
                   variant="outline"
                   size="sm"
                   onClick={addCustomDeduction}
-                  className="h-7 text-xs gap-1"
+                  className="h-7 text-xs gap-1 shrink-0 self-start sm:self-auto"
                 >
                   <Plus className="w-3 h-3" />
                   Add Custom Deduction
                 </Button>
               </div>
 
-              <div className="border rounded-lg overflow-hidden divide-y">
+              <div className="border rounded-lg overflow-x-auto divide-y max-w-full">
+                <div className="min-w-[560px] divide-y">
                 <div className="grid grid-cols-12 gap-2 p-2 bg-muted/50 font-semibold text-[11px] text-muted-foreground">
                   <div className="col-span-1 text-center">
                     Active
@@ -1365,11 +1367,12 @@ export function CompensationEditorDialog({
                     </div>
                   </div>
                 ))}
+                </div>
               </div>
             </TabsContent>
           </Tabs>
 
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 p-3 rounded-lg bg-muted/40 border">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3 rounded-lg bg-muted/40 border">
             <div>
               <span className="text-muted-foreground block text-[10px]">
                 Monthly Gross Earnings
@@ -1442,26 +1445,26 @@ export function CompensationEditorDialog({
           </div>
         </div>
 
-        <DialogFooter className="pt-3 border-t flex items-center justify-between gap-2">
+        <DialogFooter className="pt-3 border-t flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5">
           <Button
             type="button"
             variant="ghost"
             size="sm"
             disabled={saving}
             onClick={() => onOpenChange(false)}
-            className="text-xs"
+            className="text-xs w-full sm:w-auto"
           >
             Cancel
           </Button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-end">
             <Button
               type="button"
               variant="outline"
               size="sm"
               disabled={saving}
               onClick={() => handleSave(true)}
-              className="text-xs"
+              className="text-xs flex-1 sm:flex-initial"
             >
               {saving
                 ? 'Saving...'
@@ -1473,7 +1476,7 @@ export function CompensationEditorDialog({
               size="sm"
               disabled={saving || !isReconciled}
               onClick={() => handleSave(false)}
-              className="text-xs"
+              className="text-xs flex-1 sm:flex-initial"
             >
               {saving
                 ? 'Saving...'

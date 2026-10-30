@@ -154,42 +154,45 @@ export default function PayslipPrintPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 py-6 print:py-0 print:bg-white">
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 py-4 sm:py-6 print:py-0 print:bg-white">
       {/* Top Action Bar (Hidden in Print) */}
-      <div className="max-w-[800px] mx-auto mb-4 px-4 flex items-center justify-between print:hidden">
+      <div className="max-w-[800px] mx-auto mb-4 px-3 sm:px-4 flex flex-wrap items-center justify-between gap-2 print:hidden">
         <Button
           variant="outline"
           size="sm"
-          className="text-xs bg-white text-gray-800"
+          className="text-xs bg-white text-gray-800 h-8 sm:h-9"
           onClick={() => router.back()}
         >
           <ArrowLeft className="w-3.5 h-3.5 mr-1" /> Back
         </Button>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             size="sm"
             variant="outline"
-            className="text-xs bg-white text-gray-800"
+            className="text-xs bg-white text-gray-800 h-8 sm:h-9"
             onClick={() => window.print()}
           >
-            <Printer className="w-3.5 h-3.5 mr-1" /> Print Document
+            <Printer className="w-3.5 h-3.5 mr-1" />
+            <span className="hidden sm:inline">Print Document</span>
+            <span className="sm:hidden">Print</span>
           </Button>
 
           <Button
             size="sm"
-            className="bg-[#1e2a78] hover:bg-[#152060] text-white text-xs font-semibold shadow-sm"
+            className="bg-[#1e2a78] hover:bg-[#152060] text-white text-xs font-semibold shadow-sm h-8 sm:h-9"
             onClick={handleDownloadPdf}
             disabled={isGeneratingPdf}
           >
             <Download className="w-3.5 h-3.5 mr-1" />
-            {isGeneratingPdf ? 'Generating PDF...' : 'Download Official PDF'}
+            <span className="hidden sm:inline">{isGeneratingPdf ? 'Generating PDF...' : 'Download Official PDF'}</span>
+            <span className="sm:hidden">{isGeneratingPdf ? 'PDF...' : 'PDF'}</span>
           </Button>
         </div>
       </div>
 
       {/* Payslip Document Canvas */}
-      <div className="max-w-[800px] mx-auto bg-white shadow-md border rounded-lg print:shadow-none print:border-none print:rounded-none overflow-visible">
+      <div className="max-w-[800px] mx-auto bg-white shadow-md border rounded-lg print:shadow-none print:border-none print:rounded-none overflow-x-auto print:overflow-visible">
         <style dangerouslySetInnerHTML={{ __html: `
           @media print {
             @page {

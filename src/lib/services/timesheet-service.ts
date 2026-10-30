@@ -17,6 +17,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin'
 import { createAuditLog } from '@/lib/services/audit-service'
+import { getCompanyMonthlyCalendar } from '@/lib/services/company-calendar-service'
 
 export type TimesheetStatus =
   | 'DRAFT'
@@ -36,6 +37,12 @@ export interface TimesheetEntry {
   description: string
   hours: number
   isBillable: boolean
+  isLeave?: boolean
+  leaveTypeId?: string | null
+  leaveTypeName?: string | null
+  leaveTypeCode?: string | null
+  leaveReason?: string | null
+  isPaid?: boolean | null
   createdAt?: string
   updatedAt?: string
 }
@@ -76,6 +83,12 @@ export interface MonthlyTimesheet {
   totalHours: number
   billableHours: number
 
+  workingDaysExpected?: number
+  workdaysCompleted?: number
+  leaveDaysCount?: number
+  paidLeaveDaysCount?: number
+  unpaidLeaveDaysCount?: number
+
   submittedAt?: string | null
   submittedBy?: string | null
 
@@ -87,6 +100,7 @@ export interface MonthlyTimesheet {
 
   entries: TimesheetEntry[]
   reviews: TimesheetReview[]
+  holidays?: Array<{ date: string; name: string; type: string }>
 
   createdAt?: string
   updatedAt?: string
@@ -178,9 +192,53 @@ function normalizeStatus(
   return 'DRAFT'
 }
 
+function parseLeaveDescription(rawDesc?: string | null): {
+  isLeave: boolean
+  leaveTypeId?: string
+  leaveTypeName?: string
+  leaveTypeCode?: string
+  isPaid?: boolean
+  cleanDescription: string
+} {
+  const desc = String(rawDesc || '').trim()
+  const match = desc.match(/^\[LEAVE\|id:([^|]*)\|code:([^|]*)\|name:([^|]*)\|paid:([^\]]*)\]\s*(.*)$/)
+  if (match) {
+    const [, id, code, name, paid, rest] = match
+    return {
+      isLeave: true,
+      leaveTypeId: id || undefined,
+      leaveTypeCode: code || undefined,
+      leaveTypeName: name || undefined,
+      isPaid: paid === '1' ? true : paid === '0' ? false : undefined,
+      cleanDescription: rest || '',
+    }
+  }
+  return {
+    isLeave: false,
+    cleanDescription: desc,
+  }
+}
+
 function mapEntry(
   entry: any
 ): TimesheetEntry {
+  const parsedDesc = parseLeaveDescription(entry.description)
+  const isLeave = Boolean(
+    entry.is_leave === true ||
+    parsedDesc.isLeave ||
+    entry.task_category === 'Leave' ||
+    entry.project_name === 'Leave'
+  )
+
+  const leaveTypeName = entry.leave_type_name || parsedDesc.leaveTypeName || (isLeave ? 'Leave' : null)
+  const leaveTypeCode = entry.leave_type_code || parsedDesc.leaveTypeCode || (isLeave ? 'LV' : null)
+  const leaveTypeId = entry.leave_type_id || parsedDesc.leaveTypeId || null
+  const isPaid = parsedDesc.isPaid ?? (entry.is_paid ?? null)
+
+  const cleanDesc = parsedDesc.isLeave
+    ? parsedDesc.cleanDescription
+    : (entry.description || '')
+
   return {
     id: entry.id,
 
@@ -197,16 +255,24 @@ function mapEntry(
     taskCategory:
       entry.task_category ||
       entry.task_title ||
+      entry.task_name ||
       '',
 
     description:
-      entry.description || '',
+      cleanDesc,
 
     hours:
       Number(entry.hours || 0),
 
     isBillable:
       entry.is_billable === true,
+
+    isLeave,
+    leaveTypeId,
+    leaveTypeName,
+    leaveTypeCode,
+    leaveReason: isLeave ? cleanDesc : undefined,
+    isPaid,
 
     createdAt:
       entry.created_at,
@@ -246,8 +312,29 @@ function mapReview(
 function mapTimesheet(
   ts: any,
   entries: TimesheetEntry[] = [],
-  reviews: TimesheetReview[] = []
+  reviews: TimesheetReview[] = [],
+  calendar?: { workingDays: number; holidays: Array<{ date: string; name: string; type: string }> }
 ): MonthlyTimesheet {
+  const workedDates = new Set<string>()
+  const leaveDates = new Set<string>()
+  const paidLeaveDates = new Set<string>()
+  const unpaidLeaveDates = new Set<string>()
+
+  for (const entry of entries) {
+    const d = entry.entryDate?.slice(0, 10)
+    if (!d) continue
+    if (entry.isLeave) {
+      leaveDates.add(d)
+      if (entry.isPaid === false) {
+        unpaidLeaveDates.add(d)
+      } else {
+        paidLeaveDates.add(d)
+      }
+    } else if (Number(entry.hours || 0) > 0) {
+      workedDates.add(d)
+    }
+  }
+
   return {
     id:
       ts.id,
@@ -293,6 +380,21 @@ function mapTimesheet(
     billableHours:
       Number(ts.billable_hours || 0),
 
+    workingDaysExpected:
+      calendar?.workingDays,
+
+    workdaysCompleted:
+      workedDates.size,
+
+    leaveDaysCount:
+      leaveDates.size,
+
+    paidLeaveDaysCount:
+      paidLeaveDates.size,
+
+    unpaidLeaveDaysCount:
+      unpaidLeaveDates.size,
+
     submittedAt:
       ts.submitted_at,
 
@@ -313,6 +415,7 @@ function mapTimesheet(
 
     entries,
     reviews,
+    holidays: calendar?.holidays,
 
     createdAt:
       ts.created_at,
@@ -389,6 +492,13 @@ export async function getEmployeeMonthlyTimesheet(
     )
   }
 
+  let calendarDetails: any = undefined
+  try {
+    calendarDetails = await getCompanyMonthlyCalendar(companyId, year, month)
+  } catch {
+    // Non-fatal
+  }
+
   if (!ts) {
     return {
       id: '',
@@ -408,10 +518,22 @@ export async function getEmployeeMonthlyTimesheet(
         0,
       billableHours:
         0,
+      workingDaysExpected:
+        calendarDetails?.workingDays,
+      workdaysCompleted:
+        0,
+      leaveDaysCount:
+        0,
+      paidLeaveDaysCount:
+        0,
+      unpaidLeaveDaysCount:
+        0,
       entries:
         [],
       reviews:
         [],
+      holidays:
+        calendarDetails?.holidays,
     }
   }
 
@@ -463,13 +585,9 @@ export async function getEmployeeMonthlyTimesheet(
       )
 
   if (reviewsError) {
-    console.error(
-      '[TimesheetService] Failed to load reviews:',
-      reviewsError
-    )
-
-    throw new Error(
-      `Unable to load timesheet review history: ${reviewsError.message}`
+    console.warn(
+      '[TimesheetService] Could not load review history (non-fatal):',
+      reviewsError.message
     )
   }
 
@@ -480,7 +598,8 @@ export async function getEmployeeMonthlyTimesheet(
     ),
     (reviews || []).map(
       mapReview
-    )
+    ),
+    calendarDetails
   )
 }
 
@@ -528,13 +647,20 @@ export async function saveTimesheetDraft(
 
     const hours =
       Number(
-        entry.hours
+        entry.hours || 0
       )
+
+    const isLeave = Boolean(
+      entry.isLeave === true ||
+      entry.taskCategory === 'Leave' ||
+      entry.projectName === 'Leave'
+    )
 
     if (
       !Number.isFinite(hours) ||
-      hours <= 0 ||
-      hours > 24
+      hours < 0 ||
+      hours > 24 ||
+      (!isLeave && hours <= 0)
     ) {
       throw new Error(
         `Invalid hours for ${entry.entryDate}.`
@@ -691,80 +817,125 @@ export async function saveTimesheetDraft(
     entries.length >
     0
   ) {
-    const insertPayload =
-      entries.map(
-        entry => ({
-          /**
-           * Required relational ownership fields.
-           */
-          timesheet_id:
-            ts.id,
+    const taskValue = (entry: any) =>
+      entry.taskCategory?.trim() ||
+      entry.taskTitle?.trim() ||
+      entry.taskName?.trim() ||
+      'General Work'
 
-          company_id:
-            companyId,
+    // Auto-classify leave entries against the 11-day annual paid leave policy if isPaid is not explicitly set
+    const leaveEntries = entries.filter(e =>
+      Boolean(e.isLeave === true || e.taskCategory === 'Leave' || e.projectName === 'Leave')
+    )
 
-          employee_id:
-            employeeId,
-
-          /**
-           * Native schema date field.
-           */
-          work_date:
-            entry.entryDate,
-
-          /**
-           * Compatibility date field used by newer UI/service.
-           */
-          entry_date:
-            entry.entryDate,
-
-          project_name:
-            entry.projectName?.trim() ||
-            null,
-
-          /**
-           * Native required task field.
-           */
-          task_title:
-            entry.taskCategory?.trim() ||
-            'General Work',
-
-          /**
-           * Compatibility category field.
-           */
-          task_category:
-            entry.taskCategory?.trim() ||
-            null,
-
-          description:
-            entry.description?.trim() ||
-            null,
-
-          hours:
-            Number(
-              entry.hours
-            ),
-
-          is_billable:
-            entry.isBillable ===
-            true,
+    const classificationMap = new Map<string, boolean>()
+    if (leaveEntries.length > 0) {
+      try {
+        const { classifyTimesheetLeaves } = await import('@/lib/services/leave-policy-service')
+        const leaveDates = leaveEntries.map(e => ({
+          date: e.entryDate,
+          reason: e.leaveReason || e.description,
+          leaveTypeId: e.leaveTypeId || undefined,
+          leaveTypeName: e.leaveTypeName || undefined,
+        }))
+        const classification = await classifyTimesheetLeaves({
+          companyId,
+          employeeId,
+          year,
+          month,
+          leaveDates,
+          excludeCurrentTimesheet: true,
         })
+        for (const item of classification.classifiedEntries) {
+          classificationMap.set(item.date, item.isPaid)
+        }
+      } catch (err: any) {
+        console.warn('[TimesheetService] Auto-classification warning:', err?.message)
+      }
+    }
+
+    const insertPayload = entries.map(entry => {
+      const isLeave = Boolean(
+        entry.isLeave === true ||
+        entry.taskCategory === 'Leave' ||
+        entry.projectName === 'Leave'
       )
 
-    const {
-      error: insertError,
-    } =
-      await supabase
-        .from(
-          'timesheet_entries'
-        )
-        .insert(
-          insertPayload
-        )
+      let isPaidVal = entry.isPaid
+      if (isLeave && (isPaidVal === undefined || isPaidVal === null)) {
+        if (classificationMap.has(entry.entryDate)) {
+          isPaidVal = classificationMap.get(entry.entryDate)
+        }
+      }
 
+      let desc = entry.description?.trim() || null
+      if (isLeave) {
+        const paidStr = isPaidVal !== undefined && isPaidVal !== null
+          ? (isPaidVal ? '1' : '0')
+          : ''
+        const reason = entry.leaveReason || entry.description || ''
+        desc = `[LEAVE|id:${entry.leaveTypeId || ''}|code:${entry.leaveTypeCode || ''}|name:${entry.leaveTypeName || ''}|paid:${paidStr}] ${reason}`.trim()
+      }
+
+      return {
+        timesheet_id: ts.id,
+        company_id: companyId,
+        employee_id: employeeId,
+        work_date: entry.entryDate,
+        entry_date: entry.entryDate,
+        project_name: isLeave ? 'Leave' : (entry.projectName?.trim() || null),
+        task_name: isLeave ? `Leave: ${entry.leaveTypeName || 'Leave'}` : taskValue(entry),
+        task_category: isLeave ? 'Leave' : (entry.taskCategory?.trim() || taskValue(entry)),
+        description: desc,
+        hours: isLeave ? 0 : Number(entry.hours || 0),
+        is_billable: isLeave ? false : (entry.isBillable === true),
+        is_leave: isLeave,
+        leave_type_id: isLeave && entry.leaveTypeId ? entry.leaveTypeId : null,
+        leave_type_name: isLeave ? (entry.leaveTypeName || null) : null,
+        leave_type_code: isLeave ? (entry.leaveTypeCode || null) : null,
+      }
+    })
+
+    let { error: insertError } = await supabase
+      .from('timesheet_entries')
+      .insert(insertPayload)
+
+    // Resilient schema cache fallback: if the database schema cache hasn't refreshed or lacks optional columns, retry safely
     if (
-      insertError
+      insertError &&
+      (insertError.message.includes('schema cache') ||
+        insertError.message.includes('column') ||
+        insertError.message.includes('not found'))
     ) {
+      console.warn(
+        '[TimesheetService] Retrying entry insertion with compatible fallback payload:',
+        insertError.message
+      )
+
+      const fallbackPayload = insertPayload.map(item => {
+        return {
+          company_id: item.company_id,
+          timesheet_id: item.timesheet_id,
+          employee_id: item.employee_id,
+          work_date: item.work_date || item.entry_date,
+          entry_date: item.entry_date || item.work_date,
+          project_name: item.project_name || null,
+          task_name: item.task_name || item.task_category || 'General Work',
+          task_category: item.task_category || item.task_name || 'General Work',
+          description: item.description,
+          hours: item.hours,
+          is_billable: item.is_billable,
+        }
+      })
+
+      const retryResult = await supabase
+        .from('timesheet_entries')
+        .insert(fallbackPayload)
+
+      insertError = retryResult.error
+    }
+
+    if (insertError) {
       console.error(
         '[TimesheetService] Entry insertion failed:',
         insertError
@@ -1795,6 +1966,15 @@ export async function reviewTimesheet(
       '[TimesheetService] Review audit failed:',
       auditError
     )
+  }
+
+  if (action === 'APPROVE') {
+    try {
+      const { syncEmployeeLeaveBalances } = await import('@/lib/services/leave-policy-service')
+      await syncEmployeeLeaveBalances(companyId, updated.employee_id, updated.year)
+    } catch (syncErr: any) {
+      console.warn('[TimesheetService] Leave balance sync warning:', syncErr?.message)
+    }
   }
 
   return getEmployeeMonthlyTimesheet(

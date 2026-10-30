@@ -78,7 +78,7 @@ export async function PATCH(request: NextRequest) {
 
       const { data: message } = await supabase
         .from('chat_messages')
-        .select('id,conversation_id,sender_user_id,deleted_at')
+        .select('id,conversation_id,sender_user_id,created_at,expires_at,deleted_at')
         .eq('company_id', context.companyId)
         .eq('id', messageId)
         .maybeSingle()
@@ -87,6 +87,23 @@ export async function PATCH(request: NextRequest) {
         return NextResponse.json(
           { success: false, error: 'Message not found' },
           { status: 404 }
+        )
+      }
+
+      const nowMs = Date.now()
+      const isExpired =
+        (message.expires_at &&
+          new Date(message.expires_at).getTime() <= nowMs) ||
+        nowMs - new Date(message.created_at).getTime() >=
+          14 * 24 * 60 * 60 * 1000
+
+      if (isExpired) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Message has expired and can no longer be edited.',
+          },
+          { status: 410 }
         )
       }
 

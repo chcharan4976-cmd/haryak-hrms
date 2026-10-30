@@ -37,11 +37,13 @@ export async function POST(request: Request) {
       }
     }
 
+    const cookiesToSet: { name: string; value: string; options?: any }[] = []
     // Updates password and atomically clears must_change_password on Supabase Auth user
     const result = await updateEmployeeFirstPassword(
       targetIdentifier || 'current-employee',
       validation.data.currentPassword,
-      validation.data.newPassword
+      validation.data.newPassword,
+      (c) => cookiesToSet.push(...c)
     )
 
     if (!result.success) {
@@ -51,11 +53,56 @@ export async function POST(request: Request) {
       )
     }
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       message: 'Password updated successfully.',
       redirectUrl: '/portal/home',
     })
+
+    // 1. Explicitly attach all Supabase SSR cookies produced during re-authentication
+    const allCookiesToSet = [...cookiesToSet, ...(result.cookiesToSet || [])]
+    allCookiesToSet.forEach(({ name, value, options }) => {
+      response.cookies.set(name, value, {
+        ...options,
+        path: '/',
+        sameSite: options?.sameSite || 'lax',
+        secure: process.env.NODE_ENV === 'production',
+      })
+    })
+
+    // 2. Propagate all remaining cookies from cookieStore with path: '/'
+    for (const cookie of cookieStore.getAll()) {
+      if (!response.cookies.has(cookie.name)) {
+        response.cookies.set(cookie.name, cookie.value, {
+          path: '/',
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+        })
+      }
+    }
+
+    // 3. Update haryak_session cookie with mustChangePassword: false, mustChangeCredentials: false
+    if (result.user) {
+      const sessionData = JSON.stringify({
+        id: result.user.id,
+        email: result.user.email,
+        fullName: result.user.fullName,
+        employeeCode: result.user.employeeCode,
+        roles: result.user.roles,
+        mustChangeCredentials: false,
+        mustChangePassword: false,
+      })
+
+      response.cookies.set('haryak_session', encodeURIComponent(sessionData), {
+        httpOnly: false,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/',
+        maxAge: 24 * 60 * 60,
+      })
+    }
+
+    return response
   } catch (error) {
     console.error('Employee first login error:', error)
     return NextResponse.json(

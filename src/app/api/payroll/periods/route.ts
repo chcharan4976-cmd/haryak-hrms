@@ -13,6 +13,10 @@ import {
   createAuditLog,
 } from '@/lib/services/audit-service'
 
+import {
+  getCompanyMonthlyCalendar,
+} from '@/lib/services/company-calendar-service'
+
 // ============================================================
 // Helpers
 // ============================================================
@@ -543,12 +547,15 @@ export async function POST(
      * - LOP
      * - approved timesheet coverage
      */
-    const workingDays =
-      calculateWeekdayWorkingDays(
+    const calendarDetails =
+      await getCompanyMonthlyCalendar(
+        companyId,
         year,
-        month,
-        calendarDays
+        month
       )
+
+    const workingDays =
+      calendarDetails.workingDays
 
     const admin =
       createAdminClient()

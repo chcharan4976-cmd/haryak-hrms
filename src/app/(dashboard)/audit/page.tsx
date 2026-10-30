@@ -8,6 +8,13 @@ import { Badge } from '@/components/ui/badge'
 import { EmptyState } from '@/components/shared/empty-state'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface AuditLogItem {
   id: string
@@ -70,42 +77,46 @@ export default function AuditLogsPage() {
       />
 
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+        <CardContent className="p-3 sm:p-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
             <div className="relative w-full sm:w-80">
-              <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
+              <Search className="w-4 h-4 absolute left-3 top-2.5 text-muted-foreground" />
               <Input
                 placeholder="Search audit trail..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 text-xs h-9"
+                className="pl-9 text-xs h-9 w-full"
               />
             </div>
 
             <div className="flex items-center gap-2 w-full sm:w-auto">
-              <select
+              <Select
                 value={actionFilter}
-                onChange={(e) => setActionFilter(e.target.value)}
-                className="p-1.5 border rounded-md text-xs bg-background h-9 text-foreground"
+                onValueChange={(val) => setActionFilter(val)}
               >
-                <option value="all">All Actions</option>
-                <option value="create">CREATE</option>
-                <option value="update">UPDATE</option>
-                <option value="approve">APPROVE</option>
-              </select>
+                <SelectTrigger className="h-9 w-full sm:w-auto min-w-[140px] text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Actions</SelectItem>
+                  <SelectItem value="create">CREATE</SelectItem>
+                  <SelectItem value="update">UPDATE</SelectItem>
+                  <SelectItem value="approve">APPROVE</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardContent>
       </Card>
 
       {loading ? (
-        <div className="flex flex-col items-center justify-center p-12 bg-card rounded-xl border">
+        <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-card rounded-xl border">
           <Loader2 className="w-8 h-8 animate-spin text-[#1e2a78] mb-2" />
           <p className="text-xs text-muted-foreground">Loading audit records...</p>
         </div>
       ) : filteredLogs.length === 0 ? (
         <Card>
-          <CardContent className="p-8">
+          <CardContent className="p-6 sm:p-8">
             <EmptyState
               icon={Shield}
               title="No audit activity has been recorded yet."
@@ -115,27 +126,27 @@ export default function AuditLogsPage() {
         </Card>
       ) : (
         <div className="bg-card rounded-xl border overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-muted/50 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
+          <div className="relative w-full overflow-x-auto">
+            <table className="w-full min-w-[760px] text-xs text-left">
+              <thead className="bg-muted/30 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
                 <tr>
-                  <th className="px-4 py-3">Timestamp</th>
-                  <th className="px-4 py-3">Actor</th>
-                  <th className="px-4 py-3">Action</th>
-                  <th className="px-4 py-3">Entity</th>
-                  <th className="px-4 py-3">Description</th>
-                  <th className="px-4 py-3">Origin IP</th>
+                  <th className="px-3 sm:px-4 py-3">Timestamp</th>
+                  <th className="px-3 sm:px-4 py-3">Actor</th>
+                  <th className="px-3 sm:px-4 py-3">Action</th>
+                  <th className="px-3 sm:px-4 py-3">Entity</th>
+                  <th className="px-3 sm:px-4 py-3">Description</th>
+                  <th className="px-3 sm:px-4 py-3">Origin IP</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border font-mono">
                 {filteredLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">{log.timestamp}</td>
-                    <td className="px-4 py-3 font-sans font-medium text-foreground">{log.user}</td>
-                    <td className="px-4 py-3">{getActionBadge(log.action)}</td>
-                    <td className="px-4 py-3 font-sans">{log.entity}</td>
-                    <td className="px-4 py-3 font-sans text-muted-foreground">{log.desc}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{log.ip}</td>
+                    <td className="px-3 sm:px-4 py-3 text-muted-foreground whitespace-nowrap">{log.timestamp}</td>
+                    <td className="px-3 sm:px-4 py-3 font-sans font-medium text-foreground max-w-[160px] truncate">{log.user}</td>
+                    <td className="px-3 sm:px-4 py-3">{getActionBadge(log.action)}</td>
+                    <td className="px-3 sm:px-4 py-3 font-sans">{log.entity}</td>
+                    <td className="px-3 sm:px-4 py-3 font-sans text-muted-foreground break-words min-w-[200px]">{log.desc}</td>
+                    <td className="px-3 sm:px-4 py-3 text-muted-foreground whitespace-nowrap">{log.ip}</td>
                   </tr>
                 ))}
               </tbody>

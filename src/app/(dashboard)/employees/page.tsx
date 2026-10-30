@@ -11,6 +11,13 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { EmptyState } from '@/components/shared/empty-state'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardContent } from '@/components/ui/card'
@@ -25,6 +32,7 @@ import { toast } from 'sonner'
 import { EditEmployeeDialog } from '@/components/employee/edit-employee-dialog'
 import { RepairAuthDialog } from '@/components/employee/repair-auth-dialog'
 import { DeleteEmployeeDialog } from '@/components/employee/delete-employee-dialog'
+import { ResetPasswordDialog } from '@/components/employee/reset-password-dialog'
 import { CompensationEditorDialog } from '@/components/compensation/compensation-editor-dialog'
 
 interface EmployeeRow {
@@ -60,9 +68,12 @@ export default function EmployeesPage() {
   const [repairOpen, setRepairOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [compensationOpen, setCompensationOpen] = useState(false)
+  const [resetPasswordOpen, setResetPasswordOpen] = useState(false)
 
-  const fetchEmployees = async () => {
-    setLoading(true)
+  const fetchEmployees = async (showFullSpinner = false) => {
+    if (showFullSpinner) {
+      setLoading(true)
+    }
     try {
       const res = await fetch('/api/employees?status=all', {
         cache: 'no-store',
@@ -78,39 +89,26 @@ export default function EmployeesPage() {
       console.error('Failed to load employees:', err)
       setEmployees([])
     } finally {
-      setLoading(false)
+      if (showFullSpinner) {
+        setLoading(false)
+      }
     }
   }
 
   useEffect(() => {
-    fetchEmployees()
+    fetchEmployees(true)
   }, [])
 
-  const handleResetPassword = async (emp: EmployeeRow) => {
-    try {
-      toast.info(`Resetting password for ${emp.name}...`)
-      const res = await fetch(`/api/employees/${emp.id}/reset-password`, { method: 'POST' })
-      const data = await res.json()
-      if (res.ok && data.temporaryPassword) {
-        toast.success(`New temporary password: ${data.temporaryPassword}`, { duration: 10000 })
-      } else if (data.canRepair) {
-        toast.error('Login account needs repair.')
-        setSelectedEmployee(emp)
-        setRepairOpen(true)
-      } else {
-        toast.error(data.error || 'Failed to reset password')
-      }
-    } catch {
-      toast.error('Network error resetting password')
-    }
-  }
-
-  const openAction = (emp: EmployeeRow, action: 'edit' | 'repair' | 'delete' | 'comp') => {
+  const openAction = (
+    emp: EmployeeRow,
+    action: 'edit' | 'repair' | 'delete' | 'comp' | 'reset-password'
+  ) => {
     setSelectedEmployee(emp)
     if (action === 'edit') setEditOpen(true)
     if (action === 'repair') setRepairOpen(true)
     if (action === 'delete') setDeleteOpen(true)
     if (action === 'comp') setCompensationOpen(true)
+    if (action === 'reset-password') setResetPasswordOpen(true)
   }
 
   const filteredEmployees = employees.filter(emp => {
@@ -129,7 +127,7 @@ export default function EmployeesPage() {
     const st = status.toLowerCase()
     if (st === 'active') return <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border-emerald-200">Active</Badge>
     if (st === 'probation') return <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-200">Probation</Badge>
-    if (st === 'notice') return <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300border-orange-200">Notice</Badge>
+    if (st === 'notice') return <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-950 dark:text-orange-300 border-orange-200">Notice</Badge>
     if (st === 'inactive') return <Badge variant="secondary">Inactive</Badge>
     if (st === 'terminated') return <Badge variant="destructive">Terminated</Badge>
     return <Badge variant="secondary">{status}</Badge>
@@ -150,9 +148,9 @@ export default function EmployeesPage() {
 
       {/* Filter and Search Bar */}
       <Card>
-        <CardContent className="p-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="relative w-full sm:w-80">
+        <CardContent className="p-3 sm:p-4">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+            <div className="relative w-full sm:w-72 md:w-80">
               <Search className="w-4 h-4 absolute left-3 top-3 text-muted-foreground" />
               <Input
                 placeholder="Search by name, ID or email..."
@@ -162,32 +160,35 @@ export default function EmployeesPage() {
               />
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="p-1.5 border rounded-md text-xs bg-background h-9 text-foreground"
-              >
-                <option value="all">All Statuses</option>
-                <option value="active">Active</option>
-                <option value="probation">Probation</option>
-                <option value="notice">Notice</option>
-                <option value="inactive">Inactive</option>
-                <option value="terminated">Terminated</option>
-              </select>
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
+              <Select value={statusFilter} onValueChange={(value) => setStatusFilter(value)}>
+                <SelectTrigger className="h-9 w-full sm:w-auto min-w-[130px] text-xs flex-1 sm:flex-initial">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="probation">Probation</SelectItem>
+                  <SelectItem value="notice">Notice</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                  <SelectItem value="terminated">Terminated</SelectItem>
+                </SelectContent>
+              </Select>
 
-              <div className="flex items-center border rounded-md p-0.5 bg-muted">
+              <div className="flex items-center border rounded-md p-0.5 bg-muted shrink-0">
                 <button
                   type="button"
                   onClick={() => setViewMode('table')}
-                  className={cn("p-1.5 rounded text-xs", viewMode === 'table' ? "bg-background shadow-xs text-foreground" : "text-muted-foreground")}
+                  className={cn("p-1.5 rounded text-xs min-h-[32px] min-w-[32px] flex items-center justify-center", viewMode === 'table' ? "bg-background shadow-xs text-foreground" : "text-muted-foreground")}
+                  aria-label="Table View"
                 >
                   <List className="w-3.5 h-3.5" />
                 </button>
                 <button
                   type="button"
                   onClick={() => setViewMode('card')}
-                  className={cn("p-1.5 rounded text-xs", viewMode === 'card' ? "bg-background shadow-xs text-foreground" : "text-muted-foreground")}
+                  className={cn("p-1.5 rounded text-xs min-h-[32px] min-w-[32px] flex items-center justify-center", viewMode === 'card' ? "bg-background shadow-xs text-foreground" : "text-muted-foreground")}
+                  aria-label="Card View"
                 >
                   <Grid3X3 className="w-3.5 h-3.5" />
                 </button>
@@ -205,7 +206,7 @@ export default function EmployeesPage() {
         </div>
       ) : filteredEmployees.length === 0 ? (
         <Card>
-          <CardContent className="p-8">
+          <CardContent className="p-6 sm:p-8">
             <EmptyState
               icon={Users}
               title={employees.length === 0 ? "No employees have been added yet." : "No matching employees found."}
@@ -224,22 +225,22 @@ export default function EmployeesPage() {
         </Card>
       ) : viewMode === 'table' ? (
         <div className="bg-card rounded-xl border overflow-hidden shadow-xs">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs text-left">
-              <thead className="bg-muted/50 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
+          <div className="overflow-x-auto w-full">
+            <table className="w-full min-w-[680px] text-xs text-left">
+              <thead className="bg-muted/30 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
                 <tr>
-                  <th className="px-4 py-3">Employee</th>
-                  <th className="px-4 py-3">Employee ID</th>
-                  <th className="px-4 py-3">Department</th>
-                  <th className="px-4 py-3">Designation</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Actions</th>
+                  <th className="px-3 sm:px-4 py-3 min-w-[200px]">Employee</th>
+                  <th className="px-3 sm:px-4 py-3">Employee ID</th>
+                  <th className="px-3 sm:px-4 py-3">Department</th>
+                  <th className="px-3 sm:px-4 py-3">Designation</th>
+                  <th className="px-3 sm:px-4 py-3">Status</th>
+                  <th className="px-3 sm:px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {filteredEmployees.map((emp) => (
                   <tr key={emp.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-3.5">
+                    <td className="px-3 sm:px-4 py-3.5">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center font-bold text-xs">
                           {emp.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
@@ -252,13 +253,13 @@ export default function EmployeesPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3.5 font-mono font-medium text-blue-700 dark:text-blue-400">
+                    <td className="px-3 sm:px-4 py-3.5 font-mono font-medium text-blue-700 dark:text-blue-400">
                       {emp.code}
                     </td>
-                    <td className="px-4 py-3.5 text-muted-foreground">{emp.department}</td>
-                    <td className="px-4 py-3.5 text-muted-foreground">{emp.designation}</td>
-                    <td className="px-4 py-3.5">{getStatusBadge(emp.status)}</td>
-                    <td className="px-4 py-3.5 text-right">
+                    <td className="px-3 sm:px-4 py-3.5 text-muted-foreground">{emp.department}</td>
+                    <td className="px-3 sm:px-4 py-3.5 text-muted-foreground">{emp.designation}</td>
+                    <td className="px-3 sm:px-4 py-3.5">{getStatusBadge(emp.status)}</td>
+                    <td className="px-3 sm:px-4 py-3.5 text-right">
                       <div className="flex items-center justify-end gap-1.5">
                         <Link href={`/employees/${emp.id}`}>
                           <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-600 hover:text-blue-800">
@@ -276,7 +277,7 @@ export default function EmployeesPage() {
                             <DropdownMenuItem onClick={() => openAction(emp, 'edit')}>
                               <Edit className="w-3.5 h-3.5 mr-2 text-blue-600" /> Edit Employee
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleResetPassword(emp)}>
+                            <DropdownMenuItem onClick={() => openAction(emp, 'reset-password')}>
                               <KeyRound className="w-3.5 h-3.5 mr-2 text-amber-600" /> Reset Temp Password
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => openAction(emp, 'repair')}>
@@ -308,10 +309,10 @@ export default function EmployeesPage() {
           </div>
         </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
           {filteredEmployees.map((emp) => (
             <Card key={emp.id} className="hover:shadow-sm transition-shadow">
-              <CardContent className="p-5 space-y-4">
+              <CardContent className="p-4 sm:p-5 space-y-4">
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center font-bold text-xs">
@@ -355,7 +356,7 @@ export default function EmployeesPage() {
                       <DropdownMenuItem onClick={() => openAction(emp, 'edit')}>
                         <Edit className="w-3.5 h-3.5 mr-2 text-blue-600" /> Edit Employee
                       </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleResetPassword(emp)}>
+                      <DropdownMenuItem onClick={() => openAction(emp, 'reset-password')}>
                         <KeyRound className="w-3.5 h-3.5 mr-2 text-amber-600" /> Reset Temp Password
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => openAction(emp, 'repair')}>
@@ -393,6 +394,21 @@ export default function EmployeesPage() {
             onOpenChange={setEditOpen}
             employee={selectedEmployee}
             onSaved={fetchEmployees}
+          />
+
+          <ResetPasswordDialog
+            open={resetPasswordOpen}
+            onOpenChange={setResetPasswordOpen}
+            employee={{
+              id: selectedEmployee.id,
+              code: selectedEmployee.code,
+              name: selectedEmployee.name,
+              fullName: selectedEmployee.name,
+              email: selectedEmployee.email,
+              officialEmail: selectedEmployee.email,
+            }}
+            onSuccess={fetchEmployees}
+            onOpenRepair={() => setRepairOpen(true)}
           />
 
           <RepairAuthDialog

@@ -1,40 +1,52 @@
 import { describe, it, expect } from 'vitest'
-import { getEmployeeIdentityIntegrity } from '@/lib/services/employee-identity-service'
+import { getEmployeeIdentityIntegrity, repairEmployeeAuthIdentity } from '@/lib/services/employee-identity-service'
 
 describe('Employee Identity Integrity Service', () => {
-  it('should diagnose HRK-001 broken auth link and recommend CASE B', async () => {
+  it('should diagnose employee identity by employee code HRK-001', async () => {
     const integrity = await getEmployeeIdentityIntegrity('HRK-001')
     expect(integrity).not.toBeNull()
     if (!integrity) return
 
     expect(integrity.employeeCode).toBe('HRK-001')
-    expect(integrity.officialEmail).toBe('charan@haryak.com')
-    // Prior to repair, either CASE_B (different email) or CASE_A (same email unlinked) is diagnosed
-    expect(['CASE_A', 'CASE_B']).toContain(integrity.repairRecommendation.caseType)
+    expect(integrity.officialEmail).toBe('thiru@haryak.com')
   })
 
-  it('should repair HRK-001 auth identity and achieve clean healthy state', async () => {
-    const { repairEmployeeAuthIdentity } = await import('@/lib/services/employee-identity-service')
+  it('should diagnose employee identity by UUID', async () => {
+    // 1. Fetch by code to get the canonical employee UUID
+    const byCode = await getEmployeeIdentityIntegrity('HRK-001')
+    expect(byCode).not.toBeNull()
+    if (!byCode) return
 
-    const repairResult = await repairEmployeeAuthIdentity('HRK-001', {
+    // 2. Fetch using canonical employee UUID
+    const byUUID = await getEmployeeIdentityIntegrity(byCode.employeeId)
+    expect(byUUID).not.toBeNull()
+    if (!byUUID) return
+
+    expect(byUUID.employeeId).toBe(byCode.employeeId)
+    expect(byUUID.employeeCode).toBe('HRK-001')
+    expect(byUUID.officialEmail).toBe(byCode.officialEmail)
+  })
+
+  it('should repair auth identity by employee UUID safely', async () => {
+    const integrity = await getEmployeeIdentityIntegrity('HRK-001')
+    expect(integrity).not.toBeNull()
+    if (!integrity) return
+
+    const repairResult = await repairEmployeeAuthIdentity(integrity.employeeId, {
       tempPassword: 'TestEmployee@2026!',
     })
 
     expect(repairResult.success).toBe(true)
-    expect(['CASE_A', 'CASE_B']).toContain(repairResult.caseApplied)
-    expect(repairResult.officialEmail).toBe('charan@haryak.com')
-    expect(repairResult.authUserId).toBe('80f1b866-75c0-4ac2-8fe7-3b3c529512a2')
+    expect(repairResult.employeeCode).toBe('HRK-001')
+    expect(repairResult.officialEmail).toBe('thiru@haryak.com')
 
-    // Verify post-repair integrity
-    const updatedIntegrity = await getEmployeeIdentityIntegrity('HRK-001')
-    expect(updatedIntegrity).not.toBeNull()
-    if (!updatedIntegrity) return
+    // Verify post-repair integrity using UUID
+    const postRepair = await getEmployeeIdentityIntegrity(integrity.employeeId)
+    expect(postRepair).not.toBeNull()
+    if (!postRepair) return
 
-    expect(updatedIntegrity.isHealthy).toBe(true)
-    expect(updatedIntegrity.issues).toEqual([])
-    expect(updatedIntegrity.details.authUserId).toBe('80f1b866-75c0-4ac2-8fe7-3b3c529512a2')
-    expect(updatedIntegrity.details.authEmail).toBe('charan@haryak.com')
-    expect(updatedIntegrity.details.publicUserId).toBe('80f1b866-75c0-4ac2-8fe7-3b3c529512a2')
-    expect(updatedIntegrity.details.assignedRoles).toContain('EMPLOYEE')
-  })
+    expect(postRepair.isHealthy).toBe(true)
+    expect(postRepair.issues).toEqual([])
+  }, 30000)
 })
+

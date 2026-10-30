@@ -2476,6 +2476,12 @@ function parseDateInput(
     value instanceof
     Date
   ) {
+    if (
+      (value.getUTCHours() === 0 && value.getUTCMinutes() === 0 && value.getUTCSeconds() === 0 && value.getUTCMilliseconds() === 0) ||
+      (value.getHours() === 0 && value.getMinutes() === 0 && value.getSeconds() === 0 && value.getMilliseconds() === 0)
+    ) {
+      return new Date(value.getTime())
+    }
     date =
       new Date(
         value.getTime()
@@ -3282,7 +3288,7 @@ export function comparePayrolls(
 
 export function roundAmount(
   amount: number,
-  decimals: number = 2
+  decimals: number = 0
 ): number {
   const numeric =
     Number(

@@ -14,6 +14,15 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { toast } from 'sonner'
 import {
   UploadCloud,
@@ -215,13 +224,13 @@ export function DocumentUploadDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[92vh] overflow-y-auto">
+      <DialogContent className="max-w-2xl w-[calc(100vw-2rem)] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-base font-bold flex items-center gap-2">
-            <UploadCloud className="h-5 w-5 text-[#1e2a78]" />
-            {dialogTitle || (replacesDocumentId ? 'Upload Replacement Document' : 'Upload Employee or Company Document')}
+            <UploadCloud className="h-5 w-5 text-[#1e2a78] shrink-0" />
+            <span className="truncate">{dialogTitle || (replacesDocumentId ? 'Upload Replacement Document' : 'Upload Employee or Company Document')}</span>
           </DialogTitle>
-          <DialogDescription className="text-xs">
+          <DialogDescription className="text-xs break-words">
             Supports PDF, JPG, PNG, WEBP, DOCX, and XLSX formats up to 15 MB with SHA-256 integrity verification.
           </DialogDescription>
         </DialogHeader>
@@ -233,7 +242,7 @@ export function DocumentUploadDialog({
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
-            className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer transition-colors ${
+            className={`border-2 border-dashed rounded-xl p-4 sm:p-5 text-center cursor-pointer transition-colors ${
               isDragging
                 ? 'border-[#1e2a78] bg-blue-50/50 dark:bg-blue-950/20'
                 : file
@@ -254,14 +263,14 @@ export function DocumentUploadDialog({
             />
 
             {file ? (
-              <div className="flex items-center justify-between px-3">
-                <div className="flex items-center gap-3 text-left">
-                  <div className="p-2.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700">
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-2 px-2 sm:px-3">
+                <div className="flex items-center gap-3 text-left min-w-0">
+                  <div className="p-2.5 rounded-lg bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 shrink-0">
                     <FileCheck className="h-6 w-6" />
                   </div>
-                  <div>
-                    <p className="font-semibold text-foreground text-xs">{file.name}</p>
-                    <p className="text-[11px] text-muted-foreground">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-foreground text-xs truncate max-w-[200px] sm:max-w-md">{file.name}</p>
+                    <p className="text-[11px] text-muted-foreground truncate">
                       {formatFileSize(file.size)} • {file.type || 'Document'}
                     </p>
                   </div>
@@ -324,20 +333,21 @@ export function DocumentUploadDialog({
               {!isCompanyWide && (
                 <div className="space-y-1">
                   <Label htmlFor="employeeSelect">Associate with Employee *</Label>
-                  <select
-                    id="employeeSelect"
+                  <Select
                     value={employeeId}
-                    onChange={e => setEmployeeId(e.target.value)}
-                    className="w-full rounded-md border bg-background p-2 text-xs font-medium"
-                    required={!isCompanyWide}
+                    onValueChange={val => setEmployeeId(val)}
                   >
-                    <option value="">Select Employee...</option>
-                    {employees.map(emp => (
-                      <option key={emp.id} value={emp.id}>
-                        {emp.employee_code} — {emp.full_name} ({emp.department?.name || 'General'})
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger id="employeeSelect" className="w-full text-xs h-9">
+                      <SelectValue placeholder="Select Employee..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {employees.map(emp => (
+                        <SelectItem key={emp.id} value={emp.id}>
+                          {emp.employee_code} — {emp.full_name} ({emp.department?.name || 'General'})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
               )}
             </div>
@@ -359,42 +369,48 @@ export function DocumentUploadDialog({
 
             <div className="space-y-1">
               <Label htmlFor="docCategory">Document Category *</Label>
-              <select
-                id="docCategory"
+              <Select
                 value={category}
-                onChange={e => setCategory(e.target.value)}
-                className="w-full rounded-md border bg-background p-2 text-xs"
-                required
+                onValueChange={val => setCategory(val)}
               >
-                <optgroup label="Employee Identity & Onboarding">
-                  {DOCUMENT_CATEGORIES.filter(c => c.group === 'identity_onboarding').map(c => (
-                    <option key={c.code} value={c.code}>
-                      {c.name} {c.isMandatoryForEmployee ? '(*Mandatory)' : ''}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Employment & HR">
-                  {DOCUMENT_CATEGORIES.filter(c => c.group === 'employment_hr').map(c => (
-                    <option key={c.code} value={c.code}>
-                      {c.name}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Payroll & Statutory">
-                  {DOCUMENT_CATEGORIES.filter(c => c.group === 'payroll_statutory').map(c => (
-                    <option key={c.code} value={c.code}>
-                      {c.name}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="Company Documents & Policies">
-                  {DOCUMENT_CATEGORIES.filter(c => c.group === 'company_policy').map(c => (
-                    <option key={c.code} value={c.code}>
-                      {c.name}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
+                <SelectTrigger id="docCategory" className="w-full text-xs h-9">
+                  <SelectValue placeholder="Select Category" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectLabel>Employee Identity & Onboarding</SelectLabel>
+                    {DOCUMENT_CATEGORIES.filter(c => c.group === 'identity_onboarding').map(c => (
+                      <SelectItem key={c.code} value={c.code}>
+                        {c.name} {c.isMandatoryForEmployee ? '(*Mandatory)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectGroup>
+                    <SelectLabel>Employment & HR</SelectLabel>
+                    {DOCUMENT_CATEGORIES.filter(c => c.group === 'employment_hr').map(c => (
+                      <SelectItem key={c.code} value={c.code}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectGroup>
+                    <SelectLabel>Payroll & Statutory</SelectLabel>
+                    {DOCUMENT_CATEGORIES.filter(c => c.group === 'payroll_statutory').map(c => (
+                      <SelectItem key={c.code} value={c.code}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                  <SelectGroup>
+                    <SelectLabel>Company Documents & Policies</SelectLabel>
+                    {DOCUMENT_CATEGORIES.filter(c => c.group === 'company_policy').map(c => (
+                      <SelectItem key={c.code} value={c.code}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             </div>
           </div>
 

@@ -187,20 +187,20 @@ export function EditEmployeeDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[700px] max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <UserCheck className="h-5 w-5 text-indigo-600" />
-            Edit Employee Profile
+      <DialogContent className="w-[min(720px,calc(100vw-32px))] max-w-[720px] max-h-[min(90dvh,800px)] p-4 sm:p-6 box-border overflow-y-auto overflow-x-hidden flex flex-col gap-4">
+        <DialogHeader className="pr-8 text-left space-y-1">
+          <DialogTitle className="flex items-center gap-2 text-base sm:text-lg font-semibold leading-tight text-foreground">
+            <UserCheck className="h-5 w-5 text-indigo-600 shrink-0" />
+            <span>Edit Employee Profile</span>
           </DialogTitle>
-          <DialogDescription>
+          <DialogDescription className="text-xs sm:text-sm text-muted-foreground break-words leading-relaxed">
             Update profile and organizational details for {employee?.fullName || employee?.name} ({employee?.code || employee?.employee_code})
           </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <Tabs defaultValue="personal" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto gap-1 p-1">
               <TabsTrigger value="personal">Personal</TabsTrigger>
               <TabsTrigger value="organization">Organization</TabsTrigger>
               <TabsTrigger value="emergency">Emergency</TabsTrigger>
@@ -209,22 +209,22 @@ export function EditEmployeeDialog({
 
             {/* TAB 1: PERSONAL */}
             <TabsContent value="personal" className="space-y-4 pt-3">
-              <div className="p-3 bg-muted/40 rounded-lg flex items-center justify-between border">
+              <div className="p-3 bg-muted/40 rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-2 border">
                 <div className="space-y-0.5">
                   <div className="text-xs font-semibold uppercase text-muted-foreground flex items-center gap-1.5">
-                    <Lock className="h-3.5 w-3.5" />
+                    <Lock className="h-3.5 w-3.5 shrink-0" />
                     Employee Code (Immutable)
                   </div>
                   <div className="font-mono text-base font-bold text-foreground">
                     {employee?.code || employee?.employee_code}
                   </div>
                 </div>
-                <div className="text-xs text-muted-foreground max-w-[260px] text-right">
+                <div className="text-xs text-muted-foreground sm:max-w-[260px] sm:text-right">
                   Assigned sequentially by company counter and cannot be modified.
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="firstName">First Name *</Label>
                   <Input
@@ -244,7 +244,7 @@ export function EditEmployeeDialog({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="officialEmail">Official Email *</Label>
                   <Input
@@ -275,7 +275,7 @@ export function EditEmployeeDialog({
                 </Alert>
               )}
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="phone">Phone Number</Label>
                   <Input
@@ -314,7 +314,7 @@ export function EditEmployeeDialog({
 
             {/* TAB 2: ORGANIZATION */}
             <TabsContent value="organization" className="space-y-4 pt-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="department">Department</Label>
                   <Select
@@ -353,7 +353,7 @@ export function EditEmployeeDialog({
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="manager">Reporting Manager</Label>
                   <Select
@@ -392,7 +392,7 @@ export function EditEmployeeDialog({
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="joiningDate">Joining Date</Label>
                   <Input
@@ -433,7 +433,7 @@ export function EditEmployeeDialog({
                   onChange={e => setFormData({ ...formData, emergencyContactName: e.target.value })}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="emergencyContactPhone">Contact Phone</Label>
                   <Input
@@ -463,7 +463,7 @@ export function EditEmployeeDialog({
                   value={formData.currentAddress}
                   onChange={e => setFormData({ ...formData, currentAddress: e.target.value })}
                 />
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <Input
                     placeholder="City"
                     value={formData.currentCity}
@@ -489,7 +489,7 @@ export function EditEmployeeDialog({
                   value={formData.permanentAddress}
                   onChange={e => setFormData({ ...formData, permanentAddress: e.target.value })}
                 />
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <Input
                     placeholder="City"
                     value={formData.permanentCity}
@@ -510,14 +510,24 @@ export function EditEmployeeDialog({
             </TabsContent>
           </Tabs>
 
-          <DialogFooter className="pt-3 border-t">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+          <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-2.5 pt-3 border-t w-full">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={saving}
+              className="w-full sm:w-auto h-9 sm:h-10 text-xs sm:text-sm font-medium"
+            >
               Cancel
             </Button>
-            <Button type="submit" disabled={saving} className="bg-indigo-600 hover:bg-indigo-700 text-white">
+            <Button
+              type="submit"
+              disabled={saving}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white w-full sm:w-auto h-9 sm:h-10 text-xs sm:text-sm font-medium shadow-sm"
+            >
               {saving ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin shrink-0" />
                   Saving Changes...
                 </>
               ) : (

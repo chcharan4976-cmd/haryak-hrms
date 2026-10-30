@@ -4,6 +4,12 @@ import { resolveRequestContext } from '@/lib/services/company-resolver'
 export async function GET() {
   const resolution = await resolveRequestContext()
   if (!resolution.ok) {
+    if (resolution.error.code === 'CREDENTIALS_CHANGE_REQUIRED') {
+      return NextResponse.json({
+        authenticated: true,
+        mustChangeCredentials: true,
+      })
+    }
     return NextResponse.json(
       { authenticated: false, error: resolution.error.message },
       { status: resolution.error.status }

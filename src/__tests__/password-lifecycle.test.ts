@@ -34,4 +34,32 @@ describe('Password Lifecycle & Crypto Entropy Verification', () => {
     expect(pwd.startsWith('Hrk@') || pwd.startsWith('Hrk!')).toBe(true)
     expect(pwd).toMatch(/^Hrk[@!][A-Za-z0-9@#$%&*!]{7,}$/)
   })
+
+  test('temporary password payload adheres to secure one-time issuance contract', () => {
+    const pwd = generateTemporaryPassword()
+    const responsePayload = {
+      success: true,
+      temporaryPassword: pwd,
+      officialEmail: 'employee@haryak.com',
+      employeeName: 'Test Employee',
+      employeeCode: 'HRK-099',
+      message: 'Temporary password reset successfully for Test Employee.',
+    }
+
+    expect(responsePayload.success).toBe(true)
+    expect(responsePayload.temporaryPassword).toBeTruthy()
+    expect(typeof responsePayload.temporaryPassword).toBe('string')
+    expect(responsePayload.temporaryPassword.length).toBeGreaterThanOrEqual(12)
+    expect(responsePayload.officialEmail).toBe('employee@haryak.com')
+    expect(responsePayload.employeeName).toBe('Test Employee')
+    expect(responsePayload.employeeCode).toBe('HRK-099')
+  })
+
+  test('temporary password security: never contains whitespace or control characters', () => {
+    for (let i = 0; i < 25; i++) {
+      const pwd = generateTemporaryPassword()
+      expect(pwd).not.toMatch(/\s/)
+      expect(pwd).not.toMatch(/[\r\n\t]/)
+    }
+  })
 })

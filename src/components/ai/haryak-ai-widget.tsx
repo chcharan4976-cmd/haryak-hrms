@@ -109,21 +109,21 @@ export function HaryakAiWidget() {
   return (
     <>
       {/* Floating Toggle Button */}
-      <div className="fixed bottom-6 right-6 z-50">
+      <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50">
         {!isOpen ? (
           <Button
             onClick={() => setIsOpen(true)}
-            className="w-13 h-13 rounded-full bg-[#1e2a78] hover:bg-[#152060] text-white shadow-xl flex items-center justify-center p-0 transition-transform hover:scale-105"
+            className="w-12 h-12 sm:w-13 sm:h-13 rounded-full bg-[#1e2a78] hover:bg-[#152060] text-white shadow-xl flex items-center justify-center p-0 transition-transform hover:scale-105"
             title="Haryak AI Assistant"
           >
-            <Sparkles className="w-6 h-6 text-amber-400 animate-pulse" />
+            <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-amber-400 animate-pulse" />
           </Button>
         ) : null}
       </div>
 
       {/* Floating Chat Drawer */}
       {isOpen && (
-        <div className="fixed bottom-6 right-6 z-50 w-96 h-[540px] max-h-[85vh] bg-card border rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5">
+        <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-[calc(100vw-2rem)] sm:w-96 max-w-sm h-[520px] max-h-[calc(100dvh-5rem)] bg-card border rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in fade-in slide-in-from-bottom-5">
           {/* Header */}
           <div className="p-3.5 bg-[#1e2a78] text-white flex items-center justify-between">
             <div className="flex items-center gap-2.5">

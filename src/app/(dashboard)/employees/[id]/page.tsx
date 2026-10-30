@@ -28,6 +28,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmployeeBankDetailsCard } from '@/components/employee/employee-bank-details-card'
 import { DeleteEmployeeDialog } from '@/components/employee/delete-employee-dialog'
+import { EditEmployeeDialog } from '@/components/employee/edit-employee-dialog'
+import { RepairAuthDialog } from '@/components/employee/repair-auth-dialog'
+import { ResetPasswordDialog } from '@/components/employee/reset-password-dialog'
 
 type Employee = {
   id: string
@@ -149,39 +152,65 @@ export default function EmployeeDetailPage() {
   const employeeId = String(params?.id || '')
 
   const [employee, setEmployee] = useState<Employee | null>(null)
+  const [rawEmployee, setRawEmployee] = useState<any | null>(null)
   const [compensation, setCompensation] = useState<CompensationData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deleteOpen, setDeleteOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [resetPasswordOpen, setResetPasswordOpen] = useState(false)
+  const [repairAuthOpen, setRepairAuthOpen] = useState(false)
 
-  const loadEmployee = useCallback(async () => {
+  const loadEmployee = useCallback(async (showFullSpinner = false) => {
     if (!employeeId) return
-    setLoading(true)
+    if (showFullSpinner) {
+      setLoading(true)
+    }
     setError(null)
 
     try {
-      const employeeResponse = await fetch('/api/employees?status=all', {
-        cache: 'no-store',
-        credentials: 'include',
-      })
-      const employeeResult = await employeeResponse.json()
+      let resolvedRaw: any = null
 
-      if (!employeeResponse.ok || employeeResult.success === false) {
-        throw new Error(employeeResult.error || 'Unable to load employee.')
+      try {
+        const detailRes = await fetch(`/api/employees/${employeeId}`, {
+          cache: 'no-store',
+          credentials: 'include',
+        })
+        if (detailRes.ok) {
+          const detailData = await detailRes.json()
+          if (detailData.success && (detailData.employee || detailData.data)) {
+            resolvedRaw = detailData.employee || detailData.data
+          }
+        }
+      } catch (detailErr) {
+        console.warn('Direct employee detail fetch failed, trying directory fallback:', detailErr)
       }
 
-      const employees = Array.isArray(employeeResult.employees)
-        ? employeeResult.employees
-        : Array.isArray(employeeResult.data)
-          ? employeeResult.data
-          : []
+      if (!resolvedRaw) {
+        const employeeResponse = await fetch('/api/employees?status=all', {
+          cache: 'no-store',
+          credentials: 'include',
+        })
+        const employeeResult = await employeeResponse.json()
 
-      const rawEmployee = employees.find(
-        (item: any) => String(item.id) === employeeId
-      )
+        if (!employeeResponse.ok || employeeResult.success === false) {
+          throw new Error(employeeResult.error || 'Unable to load employee.')
+        }
 
-      if (!rawEmployee) throw new Error('Employee not found.')
-      setEmployee(normalizeEmployee(rawEmployee))
+        const employees = Array.isArray(employeeResult.employees)
+          ? employeeResult.employees
+          : Array.isArray(employeeResult.data)
+            ? employeeResult.data
+            : []
+
+        resolvedRaw = employees.find(
+          (item: any) => String(item.id) === employeeId
+        )
+      }
+
+      if (!resolvedRaw) throw new Error('Employee not found.')
+      setRawEmployee(resolvedRaw)
+      setEmployee(normalizeEmployee(resolvedRaw))
 
       try {
         const compensationResponse = await fetch(`/api/compensation/${employeeId}`, {
@@ -206,12 +235,14 @@ export default function EmployeeDetailPage() {
       setEmployee(null)
       setError(err?.message || 'Unable to load employee.')
     } finally {
-      setLoading(false)
+      if (showFullSpinner) {
+        setLoading(false)
+      }
     }
   }, [employeeId])
 
   useEffect(() => {
-    void loadEmployee()
+    void loadEmployee(true)
   }, [loadEmployee])
 
   const initials = useMemo(() => {
@@ -276,14 +307,14 @@ export default function EmployeeDetailPage() {
       </div>
 
       <Card>
-        <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-center gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-lg font-bold text-blue-800">
+        <CardContent className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start sm:items-center gap-3 sm:gap-4">
+            <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-base sm:text-lg font-bold text-blue-800 dark:bg-blue-950 dark:text-blue-300">
               {initials}
             </div>
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-xl font-bold">{employee.fullName}</h1>
+                <h1 className="break-words text-lg sm:text-xl font-bold">{employee.fullName}</h1>
                 <Badge
                   className={
                     active
@@ -295,8 +326,8 @@ export default function EmployeeDetailPage() {
                   {employee.status || (employee.is_active ? 'active' : 'inactive')}
                 </Badge>
               </div>
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-mono font-semibold text-blue-700">
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-muted-foreground">
+                <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">
                   {employee.code || 'No employee code'}
                 </span>
                 <span>•</span>
@@ -307,30 +338,32 @@ export default function EmployeeDetailPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2 lg:pt-0">
             <Button
               variant="outline"
               size="sm"
-              onClick={() => toast.info('Keep your existing Edit Employee dialog wired here if you already use it.')}
+              className="text-xs h-8 sm:h-9"
+              onClick={() => setEditOpen(true)}
             >
-              <UserRoundCog className="mr-2 h-4 w-4" />
+              <UserRoundCog className="mr-1.5 h-3.5 w-3.5" />
               Edit Profile
             </Button>
             <Button
               variant="outline"
               size="sm"
-              onClick={() => toast.info('Keep your existing Reset Temp Password dialog wired here.')}
+              className="text-xs h-8 sm:h-9"
+              onClick={() => setResetPasswordOpen(true)}
             >
-              <KeyRound className="mr-2 h-4 w-4" />
+              <KeyRound className="mr-1.5 h-3.5 w-3.5" />
               Reset Temp Password
             </Button>
             <Button
               variant="outline"
               size="sm"
-              className="border-red-200 text-red-700 hover:bg-red-50"
-              onClick={() => toast.info('Keep your existing Manage Access / Repair Auth dialog wired here.')}
+              className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-900/50 dark:text-indigo-400 text-xs h-8 sm:h-9"
+              onClick={() => setRepairAuthOpen(true)}
             >
-              <ShieldCheck className="mr-2 h-4 w-4" />
+              <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
               Manage Access
             </Button>
           </div>
@@ -352,7 +385,7 @@ export default function EmployeeDetailPage() {
             <Card>
               <CardHeader className="border-b">
                 <CardTitle className="flex items-center gap-2 text-sm">
-                  <CircleUserRound className="h-4 w-4 text-blue-700" />
+                  <CircleUserRound className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
                   Personal Information
                 </CardTitle>
               </CardHeader>
@@ -377,7 +410,7 @@ export default function EmployeeDetailPage() {
           <Card>
             <CardHeader className="border-b">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <BriefcaseBusiness className="h-4 w-4 text-blue-700" />
+                <BriefcaseBusiness className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
                 Employment Information
               </CardTitle>
             </CardHeader>
@@ -393,7 +426,7 @@ export default function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="compensation" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
             <MetricCard label="Annual CTC" value={money(annualCtc)} icon={<IndianRupee className="h-4 w-4" />} />
             <MetricCard label="Monthly Gross" value={money(monthlyGross)} icon={<IndianRupee className="h-4 w-4" />} />
             <MetricCard
@@ -414,14 +447,14 @@ export default function EmployeeDetailPage() {
             </CardHeader>
             <CardContent className="p-0">
               {compensationComponents.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground">
+                <div className="p-6 sm:p-8 text-center text-sm text-muted-foreground">
                   No configured salary components were returned for this employee.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full min-w-[500px] text-sm">
                     <thead>
-                      <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                      <tr className="border-b bg-muted/30 text-left text-xs text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
                         <th className="p-3">Component</th>
                         <th className="p-3">Type</th>
                         <th className="p-3 text-right">Monthly</th>
@@ -470,7 +503,7 @@ export default function EmployeeDetailPage() {
           <Card>
             <CardHeader className="border-b">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <FileText className="h-4 w-4 text-blue-700" />
+                <FileText className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
                 Employee Documents
               </CardTitle>
             </CardHeader>
@@ -495,10 +528,52 @@ export default function EmployeeDetailPage() {
                 <p className="text-sm text-muted-foreground">
                   Account access and credentials are managed separately from employment lifecycle actions.
                 </p>
+                <div className="flex flex-wrap items-center gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8 sm:h-9"
+                    onClick={() => setResetPasswordOpen(true)}
+                  >
+                    <KeyRound className="mr-1.5 h-3.5 w-3.5 text-amber-600" />
+                    Reset Temp Password
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-900/50 dark:text-indigo-400 text-xs h-8 sm:h-9"
+                    onClick={() => setRepairAuthOpen(true)}
+                  >
+                    <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                    Manage Access
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
             <Card>
+              <CardHeader className="border-b">
+                <CardTitle className="text-sm">Profile Details</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 p-5">
+                <p className="text-sm text-muted-foreground">
+                  Update employee biographical information, organizational department, designation, and employment details.
+                </p>
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8 sm:h-9"
+                    onClick={() => setEditOpen(true)}
+                  >
+                    <UserRoundCog className="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+                    Edit Employee Profile
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="md:col-span-2">
               <CardHeader className="border-b">
                 <CardTitle className="text-sm">Payroll Readiness</CardTitle>
               </CardHeader>
@@ -542,6 +617,37 @@ export default function EmployeeDetailPage() {
         </TabsContent>
       </Tabs>
 
+      <EditEmployeeDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        employee={rawEmployee || employee}
+        onSaved={() => void loadEmployee()}
+      />
+
+      <ResetPasswordDialog
+        open={resetPasswordOpen}
+        onOpenChange={setResetPasswordOpen}
+        employee={{
+          id: employee.id,
+          code: employee.code,
+          name: employee.fullName,
+          fullName: employee.fullName,
+          email: employee.email,
+          officialEmail: employee.email,
+        }}
+        onSuccess={() => void loadEmployee()}
+        onOpenRepair={() => setRepairAuthOpen(true)}
+      />
+
+      <RepairAuthDialog
+        open={repairAuthOpen}
+        onOpenChange={setRepairAuthOpen}
+        employeeId={employee.id}
+        employeeCode={employee.code}
+        employeeName={employee.fullName}
+        onRepaired={() => void loadEmployee()}
+      />
+
       <DeleteEmployeeDialog
         open={deleteOpen}
         onOpenChange={setDeleteOpen}
@@ -576,12 +682,12 @@ function InfoRow({
   last?: boolean
 }) {
   return (
-    <div className={last ? 'flex items-center justify-between gap-4 py-3' : 'flex items-center justify-between gap-4 border-b py-3'}>
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <div className={last ? 'flex items-start sm:items-center justify-between gap-2 sm:gap-4 py-2.5 sm:py-3' : 'flex items-start sm:items-center justify-between gap-2 sm:gap-4 border-b py-2.5 sm:py-3'}>
+      <div className="flex items-center gap-1.5 sm:gap-2 text-xs text-muted-foreground shrink-0">
         {icon}
         <span>{label}</span>
       </div>
-      <span className="text-right text-sm font-medium">{value}</span>
+      <span className="text-right text-xs sm:text-sm font-medium break-words">{value}</span>
     </div>
   )
 }
@@ -596,11 +702,13 @@ function MetricCard({
   icon: React.ReactNode
 }) {
   return (
-    <Card>
-      <CardContent className="p-5">
+    <Card className="shadow-sm transition-shadow hover:shadow-md">
+      <CardContent className="p-4">
         <div className="flex items-center justify-between">
           <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          <div className="text-blue-700">{icon}</div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1e2a78]/8 text-[#1e2a78] dark:bg-blue-950/30 dark:text-blue-300">
+            {icon}
+          </div>
         </div>
         <p className="mt-2 text-xl font-bold">{value}</p>
       </CardContent>

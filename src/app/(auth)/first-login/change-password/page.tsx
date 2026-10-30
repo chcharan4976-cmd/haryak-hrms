@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useRouter } from 'next/navigation'
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { employeeFirstLoginSchema, type EmployeeFirstLoginInput } from '@/lib/validations/auth'
+import { useAuth } from '@/components/providers/auth-provider'
 import Image from 'next/image'
 
 export default function EmployeeFirstLoginPage() {
@@ -19,6 +20,29 @@ export default function EmployeeFirstLoginPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
+  const { user, loading, refreshSession } = useAuth()
+
+  useEffect(() => {
+    if (!loading && user) {
+      const roles: string[] = (user as any)?.roles || (user as any)?.user_metadata?.roles || []
+      const userRole = (user as any)?.role || (user as any)?.user_metadata?.role
+      const hasAdminRole = 
+        roles.some((r: string) => ['SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN', 'ADMINISTRATION'].includes(r)) ||
+        ['SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN', 'ADMINISTRATION'].includes(userRole)
+      const hasEmployeeRole = roles.includes('EMPLOYEE') || userRole === 'EMPLOYEE'
+      const hasEmployeeProfile = Boolean((user as any)?.employeeCode || (user as any)?.user_metadata?.employee_id)
+
+      const mustChangeCredentials = Boolean(
+        (user as any)?.user_metadata?.must_change_credentials ||
+        (user as any)?.mustChangeCredentials
+      )
+
+      // If an initial bootstrap admin lands here, guide them to admin setup
+      if (hasAdminRole && !hasEmployeeRole && !hasEmployeeProfile && mustChangeCredentials) {
+        router.replace('/first-login/change-credentials')
+      }
+    }
+  }, [user, loading, router])
 
   const { register, handleSubmit, formState: { errors } } = useForm<EmployeeFirstLoginInput>({
     resolver: zodResolver(employeeFirstLoginSchema),
@@ -42,7 +66,8 @@ export default function EmployeeFirstLoginPage() {
       }
 
       toast.success('Your password has been updated successfully! Opening Employee Portal...')
-      router.push('/portal/home')
+      await refreshSession()
+      router.push(result.redirectUrl || '/portal/home')
       router.refresh()
     } catch (error) {
       console.error('Error setting new password:', error)
@@ -53,9 +78,9 @@ export default function EmployeeFirstLoginPage() {
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-muted/40">
+    <div className="min-h-screen min-h-[100dvh] w-full flex items-center justify-center p-3 sm:p-6 lg:p-8 bg-muted/40">
       <Card className="w-full max-w-lg shadow-lg border">
-        <CardHeader className="text-center space-y-3 pb-6 border-b">
+        <CardHeader className="text-center space-y-3 p-4 sm:p-6 pb-6 border-b">
           <div className="mx-auto bg-white p-2 rounded-xl border shadow-sm w-fit">
             <Image
               src="/logo.jpg"
@@ -70,10 +95,10 @@ export default function EmployeeFirstLoginPage() {
             <span className="text-xs font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-400 block mb-1">
               Welcome to Haryak Technologies
             </span>
-            <CardTitle className="text-2xl font-bold text-foreground">
+            <CardTitle className="text-xl sm:text-2xl font-bold text-foreground">
               Create Your New Password
             </CardTitle>
-            <CardDescription className="text-sm mt-1 max-w-sm mx-auto">
+            <CardDescription className="text-xs sm:text-sm mt-1 max-w-sm mx-auto">
               You are logging in with a temporary password provided during onboarding. Please create a private password to secure your employee account.
             </CardDescription>
           </div>
