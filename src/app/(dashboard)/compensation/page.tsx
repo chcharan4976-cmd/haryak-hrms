@@ -44,15 +44,15 @@ export default function CompensationPage() {
       />
 
       <Card>
-        <div className="border-b px-4 bg-muted/20">
-          <nav className="flex space-x-6 text-xs" aria-label="Tabs">
+        <div className="border-b px-3 sm:px-4 bg-muted/20">
+          <nav className="flex space-x-4 sm:space-x-6 overflow-x-auto no-scrollbar text-xs" aria-label="Tabs">
             <button
               onClick={() => setActiveTab('structures')}
               className={cn(
                 activeTab === 'structures'
                   ? 'border-[#1e2a78] text-[#1e2a78] font-bold border-b-2 dark:text-blue-400 dark:border-blue-400'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
-                'py-3 px-1 font-medium transition-colors'
+                'py-3 px-1 font-medium transition-colors shrink-0 whitespace-nowrap'
               )}
             >
               Employee CTC Structures ({compensations.length})
@@ -63,7 +63,7 @@ export default function CompensationPage() {
                 activeTab === 'components'
                   ? 'border-[#1e2a78] text-[#1e2a78] font-bold border-b-2 dark:text-blue-400 dark:border-blue-400'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
-                'py-3 px-1 font-medium transition-colors'
+                'py-3 px-1 font-medium transition-colors shrink-0 whitespace-nowrap'
               )}
             >
               Standard Salary Components
@@ -71,9 +71,9 @@ export default function CompensationPage() {
           </nav>
         </div>
 
-        <CardContent className="p-6">
+        <CardContent className="p-3 sm:p-6">
           {loading ? (
-             <div className="flex flex-col items-center justify-center p-12 bg-card">
+             <div className="flex flex-col items-center justify-center p-8 sm:p-12 bg-card">
                <Loader2 className="w-8 h-8 animate-spin text-[#1e2a78] mb-2" />
                <p className="text-xs text-muted-foreground">Loading compensation data...</p>
              </div>
@@ -92,16 +92,16 @@ export default function CompensationPage() {
                 }
               />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-muted/50 border-b text-muted-foreground uppercase font-semibold text-[10px]">
+              <div className="relative w-full overflow-x-auto">
+                <table className="w-full min-w-[650px] text-xs text-left">
+                  <thead className="bg-muted/30 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
                     <tr>
-                      <th className="px-4 py-3">Employee</th>
-                      <th className="px-4 py-3">Department</th>
-                      <th className="px-4 py-3">Annual CTC</th>
-                      <th className="px-4 py-3">Monthly Gross</th>
-                      <th className="px-4 py-3">Effective Date</th>
-                      <th className="px-4 py-3 text-right">Profile</th>
+                      <th className="px-3 sm:px-4 py-3">Employee</th>
+                      <th className="px-3 sm:px-4 py-3">Department</th>
+                      <th className="px-3 sm:px-4 py-3">Annual CTC</th>
+                      <th className="px-3 sm:px-4 py-3">Monthly Gross</th>
+                      <th className="px-3 sm:px-4 py-3">Effective Date</th>
+                      <th className="px-3 sm:px-4 py-3 text-right">Profile</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -109,15 +109,15 @@ export default function CompensationPage() {
                       if (!comp.employee) return null;
                       return (
                         <tr key={comp.id} className="hover:bg-muted/30">
-                          <td className="px-4 py-3.5">
+                          <td className="px-3 sm:px-4 py-3.5">
                             <span className="font-semibold text-foreground block">{comp.employee.name}</span>
                             <span className="font-mono text-[11px] text-blue-700 dark:text-blue-400">{comp.employee.code}</span>
                           </td>
-                          <td className="px-4 py-3.5 text-muted-foreground">{comp.employee.department || 'Not configured'}</td>
-                          <td className="px-4 py-3.5 font-bold">{comp.annual_ctc ? formatCurrency(comp.annual_ctc) : 'Not configured'}</td>
-                          <td className="px-4 py-3.5">{comp.monthly_gross ? formatCurrency(comp.monthly_gross) : 'Not configured'}</td>
-                          <td className="px-4 py-3.5">{comp.effective_date ? new Date(comp.effective_date).toLocaleDateString() : 'Not configured'}</td>
-                          <td className="px-4 py-3.5 text-right">
+                          <td className="px-3 sm:px-4 py-3.5 text-muted-foreground">{comp.employee.department || 'Not configured'}</td>
+                          <td className="px-3 sm:px-4 py-3.5 font-bold whitespace-nowrap">{comp.annual_ctc ? formatCurrency(comp.annual_ctc) : 'Not configured'}</td>
+                          <td className="px-3 sm:px-4 py-3.5 whitespace-nowrap">{comp.monthly_gross ? formatCurrency(comp.monthly_gross) : 'Not configured'}</td>
+                          <td className="px-3 sm:px-4 py-3.5 whitespace-nowrap">{comp.effective_date ? new Date(comp.effective_date).toLocaleDateString() : 'Not configured'}</td>
+                          <td className="px-3 sm:px-4 py-3.5 text-right">
                             <Link href={`/employees/${comp.employee.id}`}>
                               <Button variant="ghost" size="sm" className="h-7 text-xs text-blue-600">
                                 <Eye className="w-3.5 h-3.5 mr-1" /> View

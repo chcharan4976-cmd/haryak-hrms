@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import {
   ArrowLeft,
   BriefcaseBusiness,
@@ -17,6 +17,7 @@ import {
   Phone,
   RefreshCw,
   ShieldCheck,
+  Trash2,
   UserRoundCog,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -26,6 +27,10 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { EmployeeBankDetailsCard } from '@/components/employee/employee-bank-details-card'
+import { DeleteEmployeeDialog } from '@/components/employee/delete-employee-dialog'
+import { EditEmployeeDialog } from '@/components/employee/edit-employee-dialog'
+import { RepairAuthDialog } from '@/components/employee/repair-auth-dialog'
+import { ResetPasswordDialog } from '@/components/employee/reset-password-dialog'
 
 type Employee = {
   id: string
@@ -81,10 +86,8 @@ type CompensationData = {
 
 function formatDate(value?: string | null): string {
   if (!value) return 'Not provided'
-
   const date = new Date(`${value.slice(0, 10)}T00:00:00`)
   if (Number.isNaN(date.getTime())) return value
-
   return new Intl.DateTimeFormat('en-IN', {
     day: '2-digit',
     month: 'short',
@@ -96,7 +99,6 @@ function money(value?: number | null): string {
   if (value === null || value === undefined || Number.isNaN(Number(value))) {
     return 'Not configured'
   }
-
   return new Intl.NumberFormat('en-IN', {
     style: 'currency',
     currency: 'INR',
@@ -146,59 +148,77 @@ function normalizeEmployee(raw: any): Employee {
 
 export default function EmployeeDetailPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
   const employeeId = String(params?.id || '')
 
   const [employee, setEmployee] = useState<Employee | null>(null)
+  const [rawEmployee, setRawEmployee] = useState<any | null>(null)
   const [compensation, setCompensation] = useState<CompensationData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [resetPasswordOpen, setResetPasswordOpen] = useState(false)
+  const [repairAuthOpen, setRepairAuthOpen] = useState(false)
 
-  const loadEmployee = useCallback(async () => {
+  const loadEmployee = useCallback(async (showFullSpinner = false) => {
     if (!employeeId) return
-
-    setLoading(true)
+    if (showFullSpinner) {
+      setLoading(true)
+    }
     setError(null)
 
     try {
-      const employeeResponse = await fetch('/api/employees', {
-        cache: 'no-store',
-        credentials: 'include',
-      })
-
-      const employeeResult = await employeeResponse.json()
-
-      if (!employeeResponse.ok || employeeResult.success === false) {
-        throw new Error(employeeResult.error || 'Unable to load employee.')
-      }
-
-      const employees = Array.isArray(employeeResult.employees)
-        ? employeeResult.employees
-        : Array.isArray(employeeResult.data)
-          ? employeeResult.data
-          : []
-
-      const rawEmployee = employees.find(
-        (item: any) => String(item.id) === employeeId
-      )
-
-      if (!rawEmployee) {
-        throw new Error('Employee not found.')
-      }
-
-      setEmployee(normalizeEmployee(rawEmployee))
+      let resolvedRaw: any = null
 
       try {
-        const compensationResponse = await fetch(
-          `/api/compensation/${employeeId}`,
-          {
-            cache: 'no-store',
-            credentials: 'include',
+        const detailRes = await fetch(`/api/employees/${employeeId}`, {
+          cache: 'no-store',
+          credentials: 'include',
+        })
+        if (detailRes.ok) {
+          const detailData = await detailRes.json()
+          if (detailData.success && (detailData.employee || detailData.data)) {
+            resolvedRaw = detailData.employee || detailData.data
           }
-        )
+        }
+      } catch (detailErr) {
+        console.warn('Direct employee detail fetch failed, trying directory fallback:', detailErr)
+      }
 
+      if (!resolvedRaw) {
+        const employeeResponse = await fetch('/api/employees?status=all', {
+          cache: 'no-store',
+          credentials: 'include',
+        })
+        const employeeResult = await employeeResponse.json()
+
+        if (!employeeResponse.ok || employeeResult.success === false) {
+          throw new Error(employeeResult.error || 'Unable to load employee.')
+        }
+
+        const employees = Array.isArray(employeeResult.employees)
+          ? employeeResult.employees
+          : Array.isArray(employeeResult.data)
+            ? employeeResult.data
+            : []
+
+        resolvedRaw = employees.find(
+          (item: any) => String(item.id) === employeeId
+        )
+      }
+
+      if (!resolvedRaw) throw new Error('Employee not found.')
+      setRawEmployee(resolvedRaw)
+      setEmployee(normalizeEmployee(resolvedRaw))
+
+      try {
+        const compensationResponse = await fetch(`/api/compensation/${employeeId}`, {
+          cache: 'no-store',
+          credentials: 'include',
+        })
         if (compensationResponse.ok) {
           const compensationResult = await compensationResponse.json()
-
           setCompensation(
             compensationResult.compensation ??
               compensationResult.effective ??
@@ -215,20 +235,19 @@ export default function EmployeeDetailPage() {
       setEmployee(null)
       setError(err?.message || 'Unable to load employee.')
     } finally {
-      setLoading(false)
+      if (showFullSpinner) {
+        setLoading(false)
+      }
     }
   }, [employeeId])
 
   useEffect(() => {
-    void loadEmployee()
+    void loadEmployee(true)
   }, [loadEmployee])
 
   const initials = useMemo(() => {
-    const source = employee?.fullName || ''
-    const pieces = source.split(/\s+/).filter(Boolean)
-
+    const pieces = (employee?.fullName || '').split(/\s+/).filter(Boolean)
     if (pieces.length === 0) return 'E'
-
     return pieces
       .slice(0, 2)
       .map((piece) => piece[0]?.toUpperCase())
@@ -240,9 +259,7 @@ export default function EmployeeDetailPage() {
       <div className="flex min-h-[60vh] items-center justify-center">
         <div className="text-center">
           <Loader2 className="mx-auto h-7 w-7 animate-spin text-muted-foreground" />
-          <p className="mt-3 text-sm text-muted-foreground">
-            Loading employee profile...
-          </p>
+          <p className="mt-3 text-sm text-muted-foreground">Loading employee profile...</p>
         </div>
       </div>
     )
@@ -257,21 +274,13 @@ export default function EmployeeDetailPage() {
             Back to Employee Directory
           </Link>
         </Button>
-
         <Card className="border-red-200">
           <CardContent className="p-8 text-center">
-            <p className="font-semibold text-red-700">
-              Employee profile could not be loaded.
-            </p>
+            <p className="font-semibold text-red-700">Employee profile could not be loaded.</p>
             <p className="mt-2 text-sm text-muted-foreground">
               {error || 'Employee not found.'}
             </p>
-
-            <Button
-              className="mt-4"
-              variant="outline"
-              onClick={() => void loadEmployee()}
-            >
+            <Button className="mt-4" variant="outline" onClick={() => void loadEmployee()}>
               <RefreshCw className="mr-2 h-4 w-4" />
               Retry
             </Button>
@@ -282,19 +291,14 @@ export default function EmployeeDetailPage() {
   }
 
   const annualCtc = compensation?.annualCtc ?? compensation?.annual_ctc
-  const monthlyGross =
-    compensation?.monthlyGross ?? compensation?.monthly_gross
+  const monthlyGross = compensation?.monthlyGross ?? compensation?.monthly_gross
   const compensationComponents = compensation?.components ?? []
+  const active = employee.status === 'active' || employee.is_active === true
 
   return (
     <div className="space-y-6">
       <div>
-        <Button
-          asChild
-          variant="ghost"
-          size="sm"
-          className="-ml-2 text-muted-foreground"
-        >
+        <Button asChild variant="ghost" size="sm" className="-ml-2 text-muted-foreground">
           <Link href="/employees">
             <ArrowLeft className="mr-2 h-4 w-4" />
             Back to Employee Directory
@@ -303,36 +307,27 @@ export default function EmployeeDetailPage() {
       </div>
 
       <Card>
-        <CardContent className="flex flex-col gap-4 p-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-center gap-4">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-lg font-bold text-blue-800">
+        <CardContent className="flex flex-col gap-4 p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-start sm:items-center gap-3 sm:gap-4">
+            <div className="flex h-12 w-12 sm:h-14 sm:w-14 shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-base sm:text-lg font-bold text-blue-800 dark:bg-blue-950 dark:text-blue-300">
               {initials}
             </div>
-
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <h1 className="truncate text-xl font-bold">
-                  {employee.fullName}
-                </h1>
-
+                <h1 className="break-words text-lg sm:text-xl font-bold">{employee.fullName}</h1>
                 <Badge
                   className={
-                    employee.status === 'active' || employee.is_active === true
+                    active
                       ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100'
                       : ''
                   }
-                  variant={
-                    employee.status === 'active' || employee.is_active === true
-                      ? 'default'
-                      : 'outline'
-                  }
+                  variant={active ? 'default' : 'outline'}
                 >
                   {employee.status || (employee.is_active ? 'active' : 'inactive')}
                 </Badge>
               </div>
-
-              <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-mono font-semibold text-blue-700">
+              <div className="mt-1 flex flex-wrap items-center gap-1.5 sm:gap-2 text-xs text-muted-foreground">
+                <span className="font-mono font-semibold text-blue-700 dark:text-blue-400">
                   {employee.code || 'No employee code'}
                 </span>
                 <span>•</span>
@@ -343,44 +338,32 @@ export default function EmployeeDetailPage() {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 pt-2 lg:pt-0">
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                toast.info(
-                  'Keep your existing Edit Employee dialog wired here if you already use it.'
-                )
-              }
+              className="text-xs h-8 sm:h-9"
+              onClick={() => setEditOpen(true)}
             >
-              <UserRoundCog className="mr-2 h-4 w-4" />
+              <UserRoundCog className="mr-1.5 h-3.5 w-3.5" />
               Edit Profile
             </Button>
-
             <Button
               variant="outline"
               size="sm"
-              onClick={() =>
-                toast.info(
-                  'Keep your existing Reset Temp Password dialog wired here.'
-                )
-              }
+              className="text-xs h-8 sm:h-9"
+              onClick={() => setResetPasswordOpen(true)}
             >
-              <KeyRound className="mr-2 h-4 w-4" />
+              <KeyRound className="mr-1.5 h-3.5 w-3.5" />
               Reset Temp Password
             </Button>
-
             <Button
               variant="outline"
               size="sm"
-              className="border-red-200 text-red-700 hover:bg-red-50"
-              onClick={() =>
-                toast.info(
-                  'Keep your existing Manage Access / Repair Auth dialog wired here.'
-                )
-              }
+              className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-900/50 dark:text-indigo-400 text-xs h-8 sm:h-9"
+              onClick={() => setRepairAuthOpen(true)}
             >
-              <ShieldCheck className="mr-2 h-4 w-4" />
+              <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
               Manage Access
             </Button>
           </div>
@@ -392,9 +375,7 @@ export default function EmployeeDetailPage() {
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="employment">Employment</TabsTrigger>
           <TabsTrigger value="compensation">Compensation</TabsTrigger>
-          <TabsTrigger value="attendance-leave">
-            Attendance & Leave
-          </TabsTrigger>
+          <TabsTrigger value="attendance-leave">Attendance & Leave</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="actions">Actions</TabsTrigger>
         </TabsList>
@@ -404,44 +385,23 @@ export default function EmployeeDetailPage() {
             <Card>
               <CardHeader className="border-b">
                 <CardTitle className="flex items-center gap-2 text-sm">
-                  <CircleUserRound className="h-4 w-4 text-blue-700" />
+                  <CircleUserRound className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
                   Personal Information
                 </CardTitle>
               </CardHeader>
-
               <CardContent className="space-y-0 p-5">
-                <InfoRow
-                  icon={<Mail className="h-4 w-4" />}
-                  label="Work Email"
-                  value={employee.email || 'Not provided'}
-                />
-                <InfoRow
-                  icon={<Phone className="h-4 w-4" />}
-                  label="Contact Phone"
-                  value={employee.phone || 'Not provided'}
-                />
-                <InfoRow
-                  label="Gender"
-                  value={employee.gender || 'Not provided'}
-                />
-                <InfoRow
-                  label="Date of Birth"
-                  value={formatDate(
-                    employee.dateOfBirth || employee.date_of_birth
-                  )}
-                  last
-                />
+                <InfoRow icon={<Mail className="h-4 w-4" />} label="Work Email" value={employee.email || 'Not provided'} />
+                <InfoRow icon={<Phone className="h-4 w-4" />} label="Contact Phone" value={employee.phone || 'Not provided'} />
+                <InfoRow label="Gender" value={employee.gender || 'Not provided'} />
+                <InfoRow label="Date of Birth" value={formatDate(employee.dateOfBirth || employee.date_of_birth)} last />
               </CardContent>
             </Card>
-
             <EmployeeBankDetailsCard
               employeeId={employee.id}
               employeeName={employee.fullName}
-              onBankAccountChanged={() => {
-                toast.success(
-                  'Bank details saved. Re-run payroll readiness if required.'
-                )
-              }}
+              onBankAccountChanged={() =>
+                toast.success('Bank details saved. Re-run payroll readiness if required.')
+              }
             />
           </div>
         </TabsContent>
@@ -450,54 +410,25 @@ export default function EmployeeDetailPage() {
           <Card>
             <CardHeader className="border-b">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <BriefcaseBusiness className="h-4 w-4 text-blue-700" />
+                <BriefcaseBusiness className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
                 Employment Information
               </CardTitle>
             </CardHeader>
-
             <CardContent className="grid gap-x-8 p-5 md:grid-cols-2">
-              <InfoRow
-                label="Employee ID"
-                value={employee.code || 'Not provided'}
-              />
-              <InfoRow
-                label="Employment Status"
-                value={employee.status || 'Not provided'}
-              />
-              <InfoRow
-                icon={<Building2 className="h-4 w-4" />}
-                label="Department"
-                value={employee.department || 'Not assigned'}
-              />
-              <InfoRow
-                label="Designation"
-                value={employee.designation || 'Not assigned'}
-              />
-              <InfoRow
-                label="Employment Type"
-                value={employee.employmentType || 'Not provided'}
-              />
-              <InfoRow
-                icon={<CalendarDays className="h-4 w-4" />}
-                label="Joining Date"
-                value={formatDate(employee.joinDate)}
-              />
+              <InfoRow label="Employee ID" value={employee.code || 'Not provided'} />
+              <InfoRow label="Employment Status" value={employee.status || 'Not provided'} />
+              <InfoRow icon={<Building2 className="h-4 w-4" />} label="Department" value={employee.department || 'Not assigned'} />
+              <InfoRow label="Designation" value={employee.designation || 'Not assigned'} />
+              <InfoRow label="Employment Type" value={employee.employmentType || 'Not provided'} />
+              <InfoRow icon={<CalendarDays className="h-4 w-4" />} label="Joining Date" value={formatDate(employee.joinDate)} />
             </CardContent>
           </Card>
         </TabsContent>
 
         <TabsContent value="compensation" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-3">
-            <MetricCard
-              label="Annual CTC"
-              value={money(annualCtc)}
-              icon={<IndianRupee className="h-4 w-4" />}
-            />
-            <MetricCard
-              label="Monthly Gross"
-              value={money(monthlyGross)}
-              icon={<IndianRupee className="h-4 w-4" />}
-            />
+          <div className="grid gap-3 sm:gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3">
+            <MetricCard label="Annual CTC" value={money(annualCtc)} icon={<IndianRupee className="h-4 w-4" />} />
+            <MetricCard label="Monthly Gross" value={money(monthlyGross)} icon={<IndianRupee className="h-4 w-4" />} />
             <MetricCard
               label="Structure Status"
               value={
@@ -510,49 +441,36 @@ export default function EmployeeDetailPage() {
               icon={<ShieldCheck className="h-4 w-4" />}
             />
           </div>
-
           <Card>
             <CardHeader className="border-b">
               <CardTitle className="text-sm">Salary Components</CardTitle>
             </CardHeader>
-
             <CardContent className="p-0">
               {compensationComponents.length === 0 ? (
-                <div className="p-8 text-center text-sm text-muted-foreground">
+                <div className="p-6 sm:p-8 text-center text-sm text-muted-foreground">
                   No configured salary components were returned for this employee.
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full min-w-[500px] text-sm">
                     <thead>
-                      <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
+                      <tr className="border-b bg-muted/30 text-left text-xs text-muted-foreground uppercase text-[10px] tracking-wider font-semibold">
                         <th className="p-3">Component</th>
                         <th className="p-3">Type</th>
                         <th className="p-3 text-right">Monthly</th>
                         <th className="p-3 text-right">Annual</th>
                       </tr>
                     </thead>
-
                     <tbody className="divide-y">
                       {compensationComponents.map((component, index) => (
                         <tr key={component.id || `${component.code}-${index}`}>
                           <td className="p-3">
                             <div className="font-medium">{component.name}</div>
-                            <div className="font-mono text-[10px] text-muted-foreground">
-                              {component.code}
-                            </div>
+                            <div className="font-mono text-[10px] text-muted-foreground">{component.code}</div>
                           </td>
-                          <td className="p-3 capitalize text-muted-foreground">
-                            {component.type}
-                          </td>
-                          <td className="p-3 text-right">
-                            {money(
-                              component.monthlyAmount ?? component.monthly
-                            )}
-                          </td>
-                          <td className="p-3 text-right">
-                            {money(component.annualAmount ?? component.annual)}
-                          </td>
+                          <td className="p-3 capitalize text-muted-foreground">{component.type}</td>
+                          <td className="p-3 text-right">{money(component.monthlyAmount ?? component.monthly)}</td>
+                          <td className="p-3 text-right">{money(component.annualAmount ?? component.annual)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -568,22 +486,14 @@ export default function EmployeeDetailPage() {
             <CardHeader className="border-b">
               <CardTitle className="text-sm">Attendance & Leave</CardTitle>
             </CardHeader>
-
             <CardContent className="p-6">
               <p className="text-sm text-muted-foreground">
                 Attendance and leave records remain authoritative in their dedicated modules.
               </p>
-
               <div className="mt-4 flex flex-wrap gap-2">
-                <Button asChild variant="outline">
-                  <Link href="/attendance">View Attendance</Link>
-                </Button>
-                <Button asChild variant="outline">
-                  <Link href="/leave">View Leave</Link>
-                </Button>
-                <Button asChild variant="outline">
-                  <Link href="/timesheets">View Timesheets</Link>
-                </Button>
+                <Button asChild variant="outline"><Link href="/attendance">View Attendance</Link></Button>
+                <Button asChild variant="outline"><Link href="/leave">View Leave</Link></Button>
+                <Button asChild variant="outline"><Link href="/timesheets">View Timesheets</Link></Button>
               </div>
             </CardContent>
           </Card>
@@ -593,16 +503,14 @@ export default function EmployeeDetailPage() {
           <Card>
             <CardHeader className="border-b">
               <CardTitle className="flex items-center gap-2 text-sm">
-                <FileText className="h-4 w-4 text-blue-700" />
+                <FileText className="h-4 w-4 text-[#1e2a78] dark:text-blue-400" />
                 Employee Documents
               </CardTitle>
             </CardHeader>
-
             <CardContent className="p-6">
               <p className="text-sm text-muted-foreground">
                 Employee documents are managed through the Document Center.
               </p>
-
               <Button asChild variant="outline" className="mt-4">
                 <Link href="/documents">Open Document Center</Link>
               </Button>
@@ -614,36 +522,150 @@ export default function EmployeeDetailPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardHeader className="border-b">
-                <CardTitle className="text-sm">
-                  Authentication & Access
-                </CardTitle>
+                <CardTitle className="text-sm">Authentication & Access</CardTitle>
               </CardHeader>
-
               <CardContent className="space-y-3 p-5">
                 <p className="text-sm text-muted-foreground">
-                  Keep your existing Edit Employee, Reset Password and Manage Access dialogs connected here.
+                  Account access and credentials are managed separately from employment lifecycle actions.
                 </p>
+                <div className="flex flex-wrap items-center gap-2 pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8 sm:h-9"
+                    onClick={() => setResetPasswordOpen(true)}
+                  >
+                    <KeyRound className="mr-1.5 h-3.5 w-3.5 text-amber-600" />
+                    Reset Temp Password
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-900/50 dark:text-indigo-400 text-xs h-8 sm:h-9"
+                    onClick={() => setRepairAuthOpen(true)}
+                  >
+                    <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                    Manage Access
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader className="border-b">
+                <CardTitle className="text-sm">Profile Details</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 p-5">
+                <p className="text-sm text-muted-foreground">
+                  Update employee biographical information, organizational department, designation, and employment details.
+                </p>
+                <div className="pt-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="text-xs h-8 sm:h-9"
+                    onClick={() => setEditOpen(true)}
+                  >
+                    <UserRoundCog className="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+                    Edit Employee Profile
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="md:col-span-2">
+              <CardHeader className="border-b">
                 <CardTitle className="text-sm">Payroll Readiness</CardTitle>
               </CardHeader>
-
               <CardContent className="p-5">
                 <p className="text-sm text-muted-foreground">
                   Bank details, compensation, timesheet approval, leave/LOP and statutory configuration are validated before payroll approval.
                 </p>
-
                 <Button asChild className="mt-4">
                   <Link href="/payroll/run">Open Payroll Run</Link>
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-red-200 md:col-span-2">
+              <CardHeader className="border-b border-red-100">
+                <CardTitle className="flex items-center gap-2 text-sm text-red-700">
+                  <Trash2 className="h-4 w-4" />
+                  Employee Lifecycle
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">
+                    Deactivate or permanently delete this employee
+                  </p>
+                  <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
+                    Deactivation preserves the employee ID and history. Permanent deletion is restricted to eligible test or accidental records and requires confirmation.
+                  </p>
+                </div>
+                <Button
+                  variant="destructive"
+                  className="shrink-0"
+                  onClick={() => setDeleteOpen(true)}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Manage Employee
                 </Button>
               </CardContent>
             </Card>
           </div>
         </TabsContent>
       </Tabs>
+
+      <EditEmployeeDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        employee={rawEmployee || employee}
+        onSaved={() => void loadEmployee()}
+      />
+
+      <ResetPasswordDialog
+        open={resetPasswordOpen}
+        onOpenChange={setResetPasswordOpen}
+        employee={{
+          id: employee.id,
+          code: employee.code,
+          name: employee.fullName,
+          fullName: employee.fullName,
+          email: employee.email,
+          officialEmail: employee.email,
+        }}
+        onSuccess={() => void loadEmployee()}
+        onOpenRepair={() => setRepairAuthOpen(true)}
+      />
+
+      <RepairAuthDialog
+        open={repairAuthOpen}
+        onOpenChange={setRepairAuthOpen}
+        employeeId={employee.id}
+        employeeCode={employee.code}
+        employeeName={employee.fullName}
+        onRepaired={() => void loadEmployee()}
+      />
+
+      <DeleteEmployeeDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        employee={{
+          id: employee.id,
+          code: employee.code,
+          name: employee.fullName,
+          fullName: employee.fullName,
+          email: employee.email,
+          status: employee.status || (employee.is_active ? 'active' : 'inactive'),
+          isActive: employee.is_active ?? active,
+        }}
+        onSuccess={() => {
+          setDeleteOpen(false)
+          router.replace('/employees')
+          router.refresh()
+        }}
+      />
     </div>
   )
 }
@@ -660,19 +682,12 @@ function InfoRow({
   last?: boolean
 }) {
   return (
-    <div
-      className={
-        last
-          ? 'flex items-center justify-between gap-4 py-3'
-          : 'flex items-center justify-between gap-4 border-b py-3'
-      }
-    >
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <div className={last ? 'flex items-start sm:items-center justify-between gap-2 sm:gap-4 py-2.5 sm:py-3' : 'flex items-start sm:items-center justify-between gap-2 sm:gap-4 border-b py-2.5 sm:py-3'}>
+      <div className="flex items-center gap-1.5 sm:gap-2 text-xs text-muted-foreground shrink-0">
         {icon}
         <span>{label}</span>
       </div>
-
-      <span className="text-right text-sm font-medium">{value}</span>
+      <span className="text-right text-xs sm:text-sm font-medium break-words">{value}</span>
     </div>
   )
 }
@@ -687,13 +702,14 @@ function MetricCard({
   icon: React.ReactNode
 }) {
   return (
-    <Card>
-      <CardContent className="p-5">
+    <Card className="shadow-sm transition-shadow hover:shadow-md">
+      <CardContent className="p-4">
         <div className="flex items-center justify-between">
           <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          <div className="text-blue-700">{icon}</div>
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#1e2a78]/8 text-[#1e2a78] dark:bg-blue-950/30 dark:text-blue-300">
+            {icon}
+          </div>
         </div>
-
         <p className="mt-2 text-xl font-bold">{value}</p>
       </CardContent>
     </Card>

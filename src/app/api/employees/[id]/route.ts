@@ -182,6 +182,7 @@ export async function GET(
         esiNumber: emp.employee_statutory_details[0].esi_number || null,
         ptApplicable: emp.employee_statutory_details[0].pt_applicable,
         ptState: emp.employee_statutory_details[0].pt_state || null,
+        ptAmount: emp.employee_statutory_details[0].pt_amount !== undefined && emp.employee_statutory_details[0].pt_amount !== null ? Number(emp.employee_statutory_details[0].pt_amount) : null,
         taxRegime: emp.employee_statutory_details[0].tax_regime || 'new',
       } : null,
     }

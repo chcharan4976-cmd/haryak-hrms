@@ -35,6 +35,7 @@ export interface CandidateAuthUser {
 export interface EmployeeIdentityIntegrity {
   employeeId: string
   employeeCode: string
+  companyId?: string
   fullName: string
   officialEmail: string
   isHealthy: boolean
@@ -81,23 +82,42 @@ export async function getEmployeeIdentityIntegrity(
   const supabase = createAdminClient()
   if (!supabase) return null
 
-  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employeeIdOrCode)
+  const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(employeeIdOrCode)
 
   let query = supabase
     .from('employees')
     .select('id, user_id, employee_code, full_name, first_name, last_name, official_email, company_id')
 
+  if (isUUID) {
+    query = query.or(`id.eq.${employeeIdOrCode},user_id.eq.${employeeIdOrCode}`)
+  } else {
+    query = query.or(`employee_code.eq.${employeeIdOrCode.toUpperCase()},employee_code.ilike.${employeeIdOrCode.trim()}`)
+  }
+
   if (companyId) {
     query = query.eq('company_id', companyId)
   }
 
-  if (isUUID) {
-    query = query.or(`id.eq.${employeeIdOrCode},user_id.eq.${employeeIdOrCode}`)
-  } else {
-    query = query.eq('employee_code', employeeIdOrCode.toUpperCase())
+  let { data: emp, error: empErr } = await query.maybeSingle()
+
+  // Fallback: If not found and companyId was specified, check without companyId to see if employee exists
+  if (!emp && companyId) {
+    let fallbackQuery = supabase
+      .from('employees')
+      .select('id, user_id, employee_code, full_name, first_name, last_name, official_email, company_id')
+
+    if (isUUID) {
+      fallbackQuery = fallbackQuery.or(`id.eq.${employeeIdOrCode},user_id.eq.${employeeIdOrCode}`)
+    } else {
+      fallbackQuery = fallbackQuery.or(`employee_code.eq.${employeeIdOrCode.toUpperCase()},employee_code.ilike.${employeeIdOrCode.trim()}`)
+    }
+
+    const { data: fallbackEmp } = await fallbackQuery.maybeSingle()
+    if (fallbackEmp && (!fallbackEmp.company_id || fallbackEmp.company_id === companyId)) {
+      emp = fallbackEmp
+    }
   }
 
-  const { data: emp, error: empErr } = await query.maybeSingle()
   if (empErr || !emp) {
     return null
   }
@@ -267,14 +287,15 @@ export async function getEmployeeIdentityIntegrity(
   return {
     employeeId: emp.id,
     employeeCode: emp.employee_code,
+    companyId: emp.company_id,
     fullName: emp.full_name,
     officialEmail: emp.official_email,
     isHealthy,
     issues,
     details: {
       employeeUserId: emp.user_id,
-      authUserId: authUser?.id || null,
-      authEmail: authUser?.email || null,
+      authUserId: authUser?.id || authUserByEmail?.id || null,
+      authEmail: authUser?.email || authUserByEmail?.email || null,
       publicUserId: publicUser?.id || null,
       publicEmail: publicUser?.email || null,
       publicUserEmployeeId: publicUser?.employee_id || null,
@@ -341,28 +362,69 @@ export async function repairEmployeeAuthIdentity(
     }
   }
 
+  if (!officialEmail) {
+    return {
+      success: false,
+      employeeCode,
+      officialEmail: '',
+      caseApplied: integrity.repairRecommendation.caseType,
+      actionsPerformed,
+      error: 'Employee does not have an official email address on record. Please update the employee profile with a valid official email before repairing login credentials.',
+    }
+  }
+
   let finalAuthUserId = ''
   const caseApplied = integrity.repairRecommendation.caseType
 
   try {
+    const { data: authUsersData } = await supabase.auth.admin.listUsers()
+    const allAuthUsers = authUsersData?.users || []
+    const normalizedOfficialEmail = officialEmail.toLowerCase().trim()
+    const authUserByEmail = allAuthUsers.find(
+      u => u.email?.toLowerCase().trim() === normalizedOfficialEmail
+    )
+
     // -------------------------------------------------------------
     // CASE A: Existing auth user with official email
     // -------------------------------------------------------------
-    if (caseApplied === 'CASE_A' && integrity.details.candidateAuthUser?.email === officialEmail) {
-      finalAuthUserId = integrity.details.candidateAuthUser.id
+    if (caseApplied === 'CASE_A' || authUserByEmail) {
+      const targetUser =
+        authUserByEmail ||
+        (integrity.details.authUserId
+          ? allAuthUsers.find(u => u.id === integrity.details.authUserId)
+          : null)
 
-      await supabase.auth.admin.updateUserById(finalAuthUserId, {
-        password: tempPassword,
-        email_confirm: true,
-        user_metadata: {
-          full_name: fullName,
-          role: 'EMPLOYEE',
-          must_change_password: true,
-          employee_id: employeeId,
-          employee_code: employeeCode,
-        },
-      })
-      actionsPerformed.push(`Updated existing Auth user (${finalAuthUserId}) with temporary password and metadata.`)
+      if (targetUser) {
+        finalAuthUserId = targetUser.id
+        await supabase.auth.admin.updateUserById(finalAuthUserId, {
+          password: tempPassword,
+          email_confirm: true,
+          user_metadata: {
+            full_name: fullName,
+            role: 'EMPLOYEE',
+            must_change_password: true,
+            must_change_credentials: false,
+            employee_id: employeeId,
+            employee_code: employeeCode,
+          },
+        })
+        actionsPerformed.push(`Updated existing Auth user (${finalAuthUserId}) with temporary password and metadata.`)
+      } else if (integrity.details.authUserId) {
+        finalAuthUserId = integrity.details.authUserId
+        await supabase.auth.admin.updateUserById(finalAuthUserId, {
+          password: tempPassword,
+          email_confirm: true,
+          user_metadata: {
+            full_name: fullName,
+            role: 'EMPLOYEE',
+            must_change_password: true,
+            must_change_credentials: false,
+            employee_id: employeeId,
+            employee_code: employeeCode,
+          },
+        })
+        actionsPerformed.push(`Updated existing Auth user (${finalAuthUserId}) with temporary password and metadata.`)
+      }
     }
     // -------------------------------------------------------------
     // CASE B: Existing auth user with historical/different email (e.g. HRK-001)
@@ -379,6 +441,7 @@ export async function repairEmployeeAuthIdentity(
           full_name: fullName,
           role: 'EMPLOYEE',
           must_change_password: true,
+          must_change_credentials: false,
           employee_id: employeeId,
           employee_code: employeeCode,
         },
@@ -394,8 +457,9 @@ export async function repairEmployeeAuthIdentity(
     // -------------------------------------------------------------
     else {
       // Check if user already exists in auth by official email
-      const { data: listData } = await supabase.auth.admin.listUsers()
-      const existing = listData?.users?.find(u => u.email?.toLowerCase().trim() === officialEmail)
+      const existing = allAuthUsers.find(
+        u => u.email?.toLowerCase().trim() === normalizedOfficialEmail
+      )
 
       if (existing) {
         finalAuthUserId = existing.id
@@ -406,6 +470,7 @@ export async function repairEmployeeAuthIdentity(
             full_name: fullName,
             role: 'EMPLOYEE',
             must_change_password: true,
+            must_change_credentials: false,
             employee_id: employeeId,
             employee_code: employeeCode,
           },
@@ -420,6 +485,7 @@ export async function repairEmployeeAuthIdentity(
             full_name: fullName,
             role: 'EMPLOYEE',
             must_change_password: true,
+            must_change_credentials: false,
             employee_id: employeeId,
             employee_code: employeeCode,
           },
@@ -508,12 +574,21 @@ export async function repairEmployeeAuthIdentity(
     actionsPerformed.push(`Linked employees.user_id to '${finalAuthUserId}'.`)
 
     // 5. Ensure EMPLOYEE role in user_roles
-    const { data: roleRow } = await supabase
+    let { data: roleRow } = await supabase
       .from('roles')
       .select('id')
       .eq('company_id', companyId)
       .eq('name', 'EMPLOYEE')
       .maybeSingle()
+
+    if (!roleRow) {
+      const { data: fallbackRole } = await supabase
+        .from('roles')
+        .select('id')
+        .eq('name', 'EMPLOYEE')
+        .maybeSingle()
+      roleRow = fallbackRole
+    }
 
     if (roleRow?.id) {
       await supabase

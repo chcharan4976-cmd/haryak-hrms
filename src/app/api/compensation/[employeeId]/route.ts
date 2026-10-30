@@ -22,11 +22,81 @@ import {
 } from '@/lib/utils/decimal'
 
 /* =========================================================
-   GET
+   HELPERS
+   ========================================================= */
+
+function normalizeDateOnly(
+  value: unknown
+): string | null {
+  if (
+    typeof value !== 'string'
+  ) {
+    return null
+  }
+
+  const normalized =
+    value.trim().slice(0, 10)
+
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(
+      normalized
+    )
+  ) {
+    return null
+  }
+
+  return normalized
+}
+
+/**
+ * DATE-only previous-day calculation.
+ *
+ * Compensation dates are PostgreSQL DATE values.
+ * Use UTC intentionally so local timezone conversion cannot
+ * move the boundary into another calendar day.
+ */
+function previousDate(
+  dateOnly: string
+): string | null {
+  const normalized =
+    normalizeDateOnly(dateOnly)
+
+  if (!normalized) {
+    return null
+  }
+
+  const [
+    year,
+    month,
+    day,
+  ] = normalized
+    .split('-')
+    .map(Number)
+
+  const date =
+    new Date(
+      Date.UTC(
+        year,
+        month - 1,
+        day
+      )
+    )
+
+  date.setUTCDate(
+    date.getUTCDate() - 1
+  )
+
+  return date
+    .toISOString()
+    .slice(0, 10)
+}
+
+/* =========================================================
+   GET EMPLOYEE COMPENSATION
    ========================================================= */
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   {
     params,
   }: {
@@ -103,12 +173,9 @@ export async function GET(
 
   const {
     data: structures,
-    error:
-      structureError,
+    error: structureError,
   } = await supabase
-    .from(
-      'salary_structures'
-    )
+    .from('salary_structures')
     .select(`
       *,
       salary_structure_components (
@@ -144,9 +211,9 @@ export async function GET(
     )
   }
 
-  const {
-    data:
-      statutoryDetails,
+  let {
+    data: statutoryDetails,
+    error: statutoryError,
   } = await supabase
     .from(
       'employee_statutory_details'
@@ -170,6 +237,50 @@ export async function GET(
     )
     .maybeSingle()
 
+  if (
+    statutoryError &&
+    (statutoryError.message?.includes('pt_amount') ||
+      statutoryError.code === '42703' ||
+      statutoryError.code === 'PGRST204')
+  ) {
+    const fallbackRes = await supabase
+      .from('employee_statutory_details')
+      .select(`
+        pf_applicable,
+        uan_number,
+        pf_number,
+        pf_joining_date,
+        esi_applicable,
+        esi_number,
+        pt_applicable,
+        pt_state,
+        tax_regime,
+        pan_masked
+      `)
+      .eq('employee_id', employeeId)
+      .maybeSingle()
+
+    if (!fallbackRes.error) {
+      statutoryDetails = fallbackRes.data
+        ? { ...fallbackRes.data, pt_amount: null }
+        : null
+      statutoryError = null
+    }
+  }
+
+  if (statutoryError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          statutoryError.message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
   const effective =
     await getEffectiveCompensation(
       employeeId,
@@ -186,21 +297,18 @@ export async function GET(
       ...codes: string[]
     ) =>
       effective.components.find(
-        (component) =>
+        component =>
           codes.includes(
-            component.code.toUpperCase()
+            component.code
+              .toUpperCase()
           )
       )
 
     const basic =
-      findComponent(
-        'BASIC'
-      )
+      findComponent('BASIC')
 
     const hra =
-      findComponent(
-        'HRA'
-      )
+      findComponent('HRA')
 
     const special =
       findComponent(
@@ -246,36 +354,45 @@ export async function GET(
           ? conveyance.monthlyAmount
           : null,
 
-      /**
-       * PT comes from employee_statutory_details,
-       * not from an invented salary component.
+      /*
+       * Professional Tax is employee statutory configuration.
+       * It is never fabricated from a salary component.
        */
       pt_deduction:
-        statutoryDetails?.pt_amount ??
+        statutoryDetails
+          ?.pt_amount ??
         null,
 
       pt_applicable:
-        statutoryDetails?.pt_applicable ??
+        statutoryDetails
+          ?.pt_applicable ??
         null,
 
       pt_state:
-        statutoryDetails?.pt_state ??
+        statutoryDetails
+          ?.pt_state ??
         null,
 
       pf_applicable:
-        statutoryDetails?.pf_applicable ??
+        statutoryDetails
+          ?.pf_applicable ??
         null,
 
       esi_applicable:
-        statutoryDetails?.esi_applicable ??
+        statutoryDetails
+          ?.esi_applicable ??
         null,
 
       pan_masked:
-        statutoryDetails?.pan_masked ??
+        statutoryDetails
+          ?.pan_masked ??
         null,
 
       effective_from:
         effective.effectiveFrom,
+
+      effective_until:
+        effective.effectiveUntil,
 
       status:
         effective.status,
@@ -284,17 +401,20 @@ export async function GET(
         effective.isComplete,
 
       incompletenessReasons:
-        effective.incompletenessReasons,
+        effective
+          .incompletenessReasons,
 
       grossEarningsFromComponents:
-        effective.grossEarningsFromComponents,
+        effective
+          .grossEarningsFromComponents,
 
       totalDeductionsFromComponents:
-        effective.totalDeductionsFromComponents,
+        effective
+          .totalDeductionsFromComponents,
 
       components:
         effective.components.map(
-          (component: any) => ({
+          component => ({
             id:
               component.id,
 
@@ -431,6 +551,52 @@ export async function POST(
     )
   }
 
+  /* -------------------------------------------------------
+     VERIFY EMPLOYEE BELONGS TO COMPANY
+     ------------------------------------------------------- */
+
+  const {
+    data: employee,
+    error: employeeError,
+  } = await supabase
+    .from('employees')
+    .select('id')
+    .eq(
+      'id',
+      employeeId
+    )
+    .eq(
+      'company_id',
+      context.companyId
+    )
+    .maybeSingle()
+
+  if (employeeError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          employeeError.message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  if (!employee) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Employee not found.',
+      },
+      {
+        status: 404,
+      }
+    )
+  }
+
   const body =
     await request.json()
 
@@ -448,6 +614,10 @@ export async function POST(
     allow_incomplete =
       false,
   } = body
+
+  /* -------------------------------------------------------
+     CORE COMPENSATION VALIDATION
+     ------------------------------------------------------- */
 
   const ctc =
     Number(
@@ -504,6 +674,38 @@ export async function POST(
     )
   }
 
+  const suppliedEffectiveDate =
+    effective_from ===
+      undefined ||
+    effective_from ===
+      null ||
+    effective_from ===
+      ''
+      ? new Date()
+          .toISOString()
+          .slice(0, 10)
+      : normalizeDateOnly(
+          String(
+            effective_from
+          )
+        )
+
+  if (!suppliedEffectiveDate) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Effective date must be a valid YYYY-MM-DD date.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  const effectiveDate =
+    suppliedEffectiveDate
+
   const requestedComponents =
     Array.isArray(components)
       ? components
@@ -526,9 +728,94 @@ export async function POST(
     )
   }
 
-  /* -----------------------------------------------------
-     RESOLVE COMPONENT DEFINITIONS FIRST
-     ----------------------------------------------------- */
+  /* -------------------------------------------------------
+     PROFESSIONAL TAX VALIDATION
+
+     IMPORTANT:
+     - No hard-coded Telangana.
+     - No inferred state.
+     - If PT is enabled, amount AND state must be supplied.
+     ------------------------------------------------------- */
+
+  const ptAmountProvided =
+    pt_amount !== undefined &&
+    pt_amount !== null &&
+    pt_amount !== ''
+
+  const ptAmount =
+    ptAmountProvided
+      ? Number(pt_amount)
+      : null
+
+  if (
+    ptAmount !== null &&
+    (
+      !Number.isFinite(
+        ptAmount
+      ) ||
+      ptAmount < 0
+    )
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Professional Tax amount must be zero or positive.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  const ptApplicable =
+    typeof pt_applicable ===
+      'boolean'
+      ? pt_applicable
+      : ptAmount !== null &&
+        ptAmount > 0
+
+  const normalizedPtState =
+    typeof pt_state ===
+      'string'
+      ? pt_state.trim()
+      : ''
+
+  if (
+    ptApplicable &&
+    !ptAmountProvided
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Professional Tax amount is required when Professional Tax is applicable.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  if (
+    ptApplicable &&
+    !normalizedPtState
+  ) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'PT State is required when Professional Tax is applicable.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -------------------------------------------------------
+     RESOLVE COMPONENT DEFINITIONS
+     ------------------------------------------------------- */
 
   const resolvedComponents:
     Array<{
@@ -542,12 +829,14 @@ export async function POST(
     }> = []
 
   for (
-    const component of requestedComponents
+    const component of
+      requestedComponents
   ) {
     let code =
       String(
         component.code ||
-          component.component_code ||
+          component
+            .component_code ||
           ''
       )
         .trim()
@@ -566,7 +855,8 @@ export async function POST(
 
     const monthlyAmount =
       Number(
-        component.monthly_amount ??
+        component
+          .monthly_amount ??
           component.monthly ??
           0
       )
@@ -589,11 +879,35 @@ export async function POST(
       )
     }
 
+    const annualAmount =
+      Number(
+        component
+          .annual_amount ??
+          component.annual ??
+          monthlyAmount * 12
+      )
+
+    if (
+      !Number.isFinite(
+        annualAmount
+      ) ||
+      annualAmount < 0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Invalid annual amount for ${code}.`,
+        },
+        {
+          status: 400,
+        }
+      )
+    }
+
     const {
-      data:
-        definition,
-      error:
-        definitionError,
+      data: definition,
+      error: definitionError,
     } = await supabase
       .from(
         'salary_components'
@@ -615,9 +929,7 @@ export async function POST(
       )
       .maybeSingle()
 
-    if (
-      definitionError
-    ) {
+    if (definitionError) {
       return NextResponse.json(
         {
           success: false,
@@ -658,26 +970,22 @@ export async function POST(
 
       monthlyAmount,
 
-      annualAmount:
-        Number(
-          component.annual_amount ??
-            component.annual ??
-            monthlyAmount * 12
-        ),
+      annualAmount,
 
       calculationType:
-        component.calculation_type ||
-        'FLAT',
+        component
+          .calculation_type ||
+        'fixed',
     })
   }
 
-  /* -----------------------------------------------------
+  /* -------------------------------------------------------
      GROSS RECONCILIATION
-     ----------------------------------------------------- */
+     ------------------------------------------------------- */
 
   const earningComponents =
     resolvedComponents.filter(
-      (component) =>
+      component =>
         component.type ===
         'earning'
     )
@@ -690,7 +998,8 @@ export async function POST(
       ) =>
         Decimal.from(total)
           .add(
-            component.monthlyAmount
+            component
+              .monthlyAmount
           )
           .toNumber(),
       0
@@ -721,52 +1030,28 @@ export async function POST(
     )
   }
 
-  /* -----------------------------------------------------
-     PT VALIDATION
-     ----------------------------------------------------- */
+  /* -------------------------------------------------------
+     FIND STRUCTURE THAT PRECEDES THIS REVISION
 
-  const ptAmount =
-    pt_amount !== undefined &&
-    pt_amount !== null &&
-    pt_amount !== ''
-      ? Number(pt_amount)
-      : null
+     We intentionally do not rely on status='active' alone.
 
-  if (
-    ptAmount !== null &&
-    (
-      !Number.isFinite(
-        ptAmount
-      ) ||
-      ptAmount < 0
-    )
-  ) {
-    return NextResponse.json(
-      {
-        success: false,
-        error:
-          'Professional Tax must be zero or positive.',
-      },
-      {
-        status: 400,
-      }
-    )
-  }
-
-  /* -----------------------------------------------------
-     EXISTING ACTIVE STRUCTURE
-     ----------------------------------------------------- */
+     Future-dated revisions can exist, so compensation
+     history must be considered chronologically.
+     ------------------------------------------------------- */
 
   const {
-    data:
-      activeStructure,
+    data: existingStructures,
+    error:
+      existingStructuresError,
   } = await supabase
-    .from(
-      'salary_structures'
-    )
-    .select(
-      'id, annual_ctc, effective_from'
-    )
+    .from('salary_structures')
+    .select(`
+      id,
+      annual_ctc,
+      effective_from,
+      effective_until,
+      status
+    `)
     .eq(
       'company_id',
       context.companyId
@@ -775,31 +1060,164 @@ export async function POST(
       'employee_id',
       employeeId
     )
-    .eq(
-      'status',
-      'active'
+    .order(
+      'effective_from',
+      {
+        ascending: false,
+      }
     )
-    .maybeSingle()
 
-  const effectiveDate =
-    effective_from ||
-    new Date()
-      .toISOString()
-      .split('T')[0]
+  if (existingStructuresError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          existingStructuresError
+            .message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
 
-  /* -----------------------------------------------------
-     CREATE REVISION RECORD
-     ----------------------------------------------------- */
+  /*
+   * Prevent duplicate compensation boundaries.
+   *
+   * Two structures for the same employee must not start on
+   * the exact same effective date.
+   */
+  const duplicateEffectiveDate =
+    (
+      existingStructures || []
+    ).find(
+      structure =>
+        normalizeDateOnly(
+          structure.effective_from
+        ) === effectiveDate
+    )
+
+  if (duplicateEffectiveDate) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          `A salary structure already exists with effective date ${effectiveDate}.`,
+      },
+      {
+        status: 409,
+      }
+    )
+  }
+
+  /*
+   * Find the most recent activated structure whose start date
+   * is before the new revision.
+   */
+  const previousStructure =
+    (
+      existingStructures || []
+    ).find(
+      structure => {
+        const from =
+          normalizeDateOnly(
+            structure.effective_from
+          )
+
+        return (
+          from !== null &&
+          from < effectiveDate &&
+          [
+            'active',
+            'superseded',
+          ].includes(
+            String(
+              structure.status
+            )
+          )
+        )
+      }
+    ) || null
+
+  /*
+   * Do not permit insertion into the middle of an already
+   * established later compensation timeline through this
+   * endpoint.
+   *
+   * That would require rebuilding multiple effective_until
+   * boundaries and is a separate correction workflow.
+   */
+  const laterStructure =
+    (
+      existingStructures || []
+    ).find(
+      structure => {
+        const from =
+          normalizeDateOnly(
+            structure.effective_from
+          )
+
+        return (
+          from !== null &&
+          from > effectiveDate &&
+          [
+            'active',
+            'superseded',
+          ].includes(
+            String(
+              structure.status
+            )
+          )
+        )
+      }
+    )
+
+  if (laterStructure) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'A later compensation revision already exists. Insertions into the middle of compensation history are not allowed through this workflow.',
+      },
+      {
+        status: 409,
+      }
+    )
+  }
+
+  const previousEnd =
+    previousDate(
+      effectiveDate
+    )
+
+  if (!previousEnd) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Unable to calculate the previous compensation end date.',
+      },
+      {
+        status: 400,
+      }
+    )
+  }
+
+  /* -------------------------------------------------------
+     CREATE REVISION
+     ------------------------------------------------------- */
+
+  const oldCtc =
+    Number(
+      previousStructure
+        ?.annual_ctc || 0
+    )
 
   const {
-    data:
-      revision,
-    error:
-      revisionError,
+    data: revision,
+    error: revisionError,
   } = await supabase
-    .from(
-      'salary_revisions'
-    )
+    .from('salary_revisions')
     .insert({
       company_id:
         context.companyId,
@@ -808,31 +1226,26 @@ export async function POST(
         employeeId,
 
       old_salary_structure_id:
-        activeStructure?.id ||
+        previousStructure?.id ||
         null,
 
       old_ctc:
-        activeStructure?.annual_ctc ||
-        0,
+        oldCtc,
 
       new_ctc:
         ctc,
 
       increment_amount:
-        ctc -
-        (
-          activeStructure?.annual_ctc ||
-          0
-        ),
+        ctc - oldCtc,
 
       increment_percentage:
-        activeStructure?.annual_ctc
+        oldCtc > 0
           ? (
               (
                 ctc -
-                activeStructure.annual_ctc
+                oldCtc
               ) /
-              activeStructure.annual_ctc
+              oldCtc
             ) *
             100
           : 0,
@@ -854,7 +1267,8 @@ export async function POST(
         context.authUserId,
 
       approved_at:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
     })
     .select('id')
     .single()
@@ -876,19 +1290,15 @@ export async function POST(
     )
   }
 
-  /* -----------------------------------------------------
+  /* -------------------------------------------------------
      CREATE NEW STRUCTURE
-     ----------------------------------------------------- */
+     ------------------------------------------------------- */
 
   const {
-    data:
-      newStructure,
-    error:
-      structureError,
+    data: newStructure,
+    error: structureError,
   } = await supabase
-    .from(
-      'salary_structures'
-    )
+    .from('salary_structures')
     .insert({
       company_id:
         context.companyId,
@@ -905,6 +1315,17 @@ export async function POST(
       effective_from:
         effectiveDate,
 
+      effective_until:
+        null,
+
+      /*
+       * Lifecycle is activated now, but entitlement is
+       * determined by effective dates in
+       * getEffectiveCompensation().
+       *
+       * Therefore a future-dated active row cannot become
+       * current prematurely.
+       */
       status:
         'active',
 
@@ -919,6 +1340,13 @@ export async function POST(
 
       created_by:
         context.authUserId,
+
+      approved_by:
+        context.authUserId,
+
+      approved_at:
+        new Date()
+          .toISOString(),
     })
     .select('id')
     .single()
@@ -928,9 +1356,7 @@ export async function POST(
     !newStructure
   ) {
     await supabase
-      .from(
-        'salary_revisions'
-      )
+      .from('salary_revisions')
       .delete()
       .eq(
         'id',
@@ -950,9 +1376,9 @@ export async function POST(
     )
   }
 
-  /* -----------------------------------------------------
-     COMPONENTS
-     ----------------------------------------------------- */
+  /* -------------------------------------------------------
+     CREATE COMPONENT SNAPSHOT
+     ------------------------------------------------------- */
 
   if (
     resolvedComponents.length >
@@ -960,7 +1386,7 @@ export async function POST(
   ) {
     const rows =
       resolvedComponents.map(
-        (component) => ({
+        component => ({
           salary_structure_id:
             newStructure.id,
 
@@ -974,7 +1400,8 @@ export async function POST(
             component.annualAmount,
 
           calculation_type:
-            component.calculationType,
+            component
+              .calculationType,
 
           is_active:
             true,
@@ -982,8 +1409,7 @@ export async function POST(
       )
 
     const {
-      error:
-        componentError,
+      error: componentError,
     } = await supabase
       .from(
         'salary_structure_components'
@@ -1024,13 +1450,26 @@ export async function POST(
     }
   }
 
-  /* -----------------------------------------------------
-     UPDATE PT CONFIGURATION
-     ----------------------------------------------------- */
+  /* -------------------------------------------------------
+     UPDATE EMPLOYEE PT CONFIGURATION
+
+     No state is invented.
+
+     PT OFF:
+       pt_applicable = false
+       pt_amount = null
+       pt_state = null
+
+     PT ON:
+       pt_applicable = true
+       explicit amount
+       explicit state
+     ------------------------------------------------------- */
 
   const {
-    data:
-      existingStatutory,
+    data: existingStatutory,
+    error:
+      existingStatutoryError,
   } = await supabase
     .from(
       'employee_statutory_details'
@@ -1042,110 +1481,157 @@ export async function POST(
     )
     .maybeSingle()
 
-  const ptApplicable =
-    typeof pt_applicable ===
-    'boolean'
-      ? pt_applicable
-      : ptAmount !== null &&
-        ptAmount > 0
-
   if (
-    existingStatutory
+    existingStatutoryError
   ) {
-    const {
-      error:
-        statutoryError,
-    } = await supabase
+    /*
+     * Compensation rows have already been created.
+     * Remove them before returning so a PT read failure does
+     * not leave a partially-created compensation revision.
+     */
+    await supabase
       .from(
-        'employee_statutory_details'
+        'salary_structures'
       )
-      .update({
-        pt_applicable:
-          ptApplicable,
-
-        pt_amount:
-          ptAmount,
-
-        pt_state:
-          ptApplicable
-            ? pt_state ||
-              'Telangana'
-            : null,
-      })
+      .delete()
       .eq(
         'id',
-        existingStatutory.id
+        newStructure.id
       )
 
-    if (statutoryError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            statutoryError.message,
-        },
-        {
-          status: 500,
-        }
+    await supabase
+      .from(
+        'salary_revisions'
       )
+      .delete()
+      .eq(
+        'id',
+        revision.id
+      )
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          existingStatutoryError
+            .message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  const statutoryPayload = {
+    pt_applicable:
+      ptApplicable,
+
+    pt_amount:
+      ptApplicable
+        ? ptAmount
+        : null,
+
+    pt_state:
+      ptApplicable
+        ? normalizedPtState
+        : null,
+  }
+
+  let statutoryError: any = null
+
+  if (existingStatutory) {
+    const res = await supabase
+      .from('employee_statutory_details')
+      .update(statutoryPayload)
+      .eq('id', existingStatutory.id)
+    statutoryError = res.error
+
+    if (
+      statutoryError &&
+      (statutoryError.message?.includes('pt_amount') ||
+        statutoryError.code === '42703' ||
+        statutoryError.code === 'PGRST204')
+    ) {
+      console.warn('Retrying statutory update without pt_amount:', statutoryError.message)
+      const fallbackPayload = { ...statutoryPayload }
+      delete (fallbackPayload as any).pt_amount
+      const fallbackRes = await supabase
+        .from('employee_statutory_details')
+        .update(fallbackPayload)
+        .eq('id', existingStatutory.id)
+      statutoryError = fallbackRes.error
     }
   } else {
-    const {
-      error:
-        statutoryError,
-    } = await supabase
-      .from(
-        'employee_statutory_details'
-      )
+    const res = await supabase
+      .from('employee_statutory_details')
       .insert({
-        employee_id:
-          employeeId,
-
-        pt_applicable:
-          ptApplicable,
-
-        pt_amount:
-          ptAmount,
-
-        pt_state:
-          ptApplicable
-            ? pt_state ||
-              'Telangana'
-            : null,
+        employee_id: employeeId,
+        ...statutoryPayload,
       })
+    statutoryError = res.error
 
-    if (statutoryError) {
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            statutoryError.message,
-        },
-        {
-          status: 500,
-        }
-      )
+    if (
+      statutoryError &&
+      (statutoryError.message?.includes('pt_amount') ||
+        statutoryError.code === '42703' ||
+        statutoryError.code === 'PGRST204')
+    ) {
+      console.warn('Retrying statutory insert without pt_amount:', statutoryError.message)
+      const fallbackPayload: Record<string, any> = {
+        employee_id: employeeId,
+        ...statutoryPayload,
+      }
+      delete fallbackPayload.pt_amount
+      const fallbackRes = await supabase
+        .from('employee_statutory_details')
+        .insert(fallbackPayload)
+      statutoryError = fallbackRes.error
     }
   }
 
-  /* -----------------------------------------------------
-     SUPERSEDE PREVIOUS STRUCTURE ONLY AFTER SUCCESS
-     ----------------------------------------------------- */
+  if (statutoryError) {
+    await supabase
+      .from('salary_structures')
+      .delete()
+      .eq('id', newStructure.id)
 
-  if (activeStructure) {
-    const previousEnd =
-      new Date(
-        new Date(
-          effectiveDate
-        ).getTime() -
-          86_400_000
-      )
-        .toISOString()
-        .split('T')[0]
+    await supabase
+      .from('salary_revisions')
+      .delete()
+      .eq('id', revision.id)
 
+    return NextResponse.json(
+      {
+        success: false,
+        error: statutoryError.message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -------------------------------------------------------
+     CLOSE PREVIOUS STRUCTURE
+
+     This happens only after:
+     - revision creation
+     - new structure creation
+     - component creation
+     - statutory update
+
+     A future revision may therefore make the previous
+     structure status "superseded" before its effective_until
+     date.
+
+     That is safe because the canonical compensation service
+     now allows an ACTIVE or SUPERSEDED structure when its
+     effective interval covers the requested date.
+     ------------------------------------------------------- */
+
+  if (previousStructure) {
     const {
-      error:
-        supersedeError,
+      error: supersedeError,
     } = await supabase
       .from(
         'salary_structures'
@@ -1159,7 +1645,7 @@ export async function POST(
       })
       .eq(
         'id',
-        activeStructure.id
+        previousStructure.id
       )
 
     if (supersedeError) {
@@ -1176,10 +1662,14 @@ export async function POST(
     }
   }
 
-  await supabase
-    .from(
-      'salary_revisions'
-    )
+  /* -------------------------------------------------------
+     LINK REVISION TO NEW STRUCTURE
+     ------------------------------------------------------- */
+
+  const {
+    error: revisionLinkError,
+  } = await supabase
+    .from('salary_revisions')
     .update({
       new_salary_structure_id:
         newStructure.id,
@@ -1189,9 +1679,22 @@ export async function POST(
       revision.id
     )
 
-  /* -----------------------------------------------------
-     FINAL CANONICAL RESULT
-     ----------------------------------------------------- */
+  if (revisionLinkError) {
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          revisionLinkError.message,
+      },
+      {
+        status: 500,
+      }
+    )
+  }
+
+  /* -------------------------------------------------------
+     FINAL CANONICAL CURRENT RESULT
+     ------------------------------------------------------- */
 
   const updated =
     await getEffectiveCompensation(
@@ -1206,6 +1709,14 @@ export async function POST(
       updated.isComplete
         ? 'Salary structure updated successfully.'
         : 'Salary structure saved but remains incomplete.',
+
+    revisionId:
+      revision.id,
+
+    newStructureId:
+      newStructure.id,
+
+    effectiveDate,
 
     compensation:
       updated,

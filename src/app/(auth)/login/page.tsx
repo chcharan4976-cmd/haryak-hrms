@@ -306,7 +306,7 @@ export default function LoginPage() {
           RIGHT SIDE — LOGIN
       ============================================================ */}
 
-      <div className="flex flex-1 flex-col justify-center px-4 py-12 sm:px-6 lg:px-12 xl:px-16">
+      <div className="flex flex-1 flex-col justify-center px-4 py-8 sm:py-12 sm:px-6 lg:px-12 xl:px-16">
         <div className="mx-auto w-full max-w-md space-y-6">
           {/* Mobile branding */}
 
@@ -336,7 +336,7 @@ export default function LoginPage() {
           {/* Header */}
 
           <div className="space-y-1">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
               Sign In to Your Account
             </h1>
 
@@ -355,7 +355,7 @@ export default function LoginPage() {
               disabled={isLoading}
               onClick={() => handleModeChange('ADMIN')}
               aria-pressed={loginMode === 'ADMIN'}
-              className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              className={`flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                 loginMode === 'ADMIN'
                   ? 'bg-[#1e2a78] text-white shadow-sm'
                   : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'
@@ -371,7 +371,7 @@ export default function LoginPage() {
               disabled={isLoading}
               onClick={() => handleModeChange('EMPLOYEE')}
               aria-pressed={loginMode === 'EMPLOYEE'}
-              className={`flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+              className={`flex min-h-[40px] items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                 loginMode === 'EMPLOYEE'
                   ? 'bg-[#1e2a78] text-white shadow-sm'
                   : 'text-muted-foreground hover:bg-background/50 hover:text-foreground'

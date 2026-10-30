@@ -52,8 +52,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (sessionCookie) {
       try {
         parsedHint = JSON.parse(sessionCookie)
-        setUser({ id: parsedHint.id, email: parsedHint.email })
-        setUserRoles(parsedHint.roles || ['SUPER_ADMIN'])
+        const roles = parsedHint.roles || (parsedHint.role ? [parsedHint.role] : ['EMPLOYEE'])
+        setUser({ 
+          id: parsedHint.id, 
+          email: parsedHint.email,
+          fullName: parsedHint.fullName,
+          roles,
+          employeeCode: parsedHint.employeeCode,
+          mustChangeCredentials: Boolean(parsedHint.mustChangeCredentials),
+          mustChangePassword: Boolean(parsedHint.mustChangePassword),
+        })
+        setUserRoles(roles)
         setProfile({
           id: parsedHint.id,
           email: parsedHint.email,
@@ -61,7 +70,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           first_name: parsedHint.fullName?.split(' ')[0] || 'User',
           last_name: parsedHint.fullName?.split(' ').slice(1).join(' ') || '',
           employee_code: parsedHint.employeeCode,
-          role: parsedHint.roles?.[0] || 'SUPER_ADMIN',
+          role: roles[0] || 'EMPLOYEE',
         })
       } catch {
         // Continue to Supabase check
@@ -72,8 +81,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const { data: { user: authUser }, error } = await supabase.auth.getUser()
       if (authUser && !error) {
-        setUser(authUser)
-        const roles = parsedHint?.roles || [authUser.user_metadata?.role || 'SUPER_ADMIN']
+        const roles = parsedHint?.roles || [authUser.user_metadata?.role || 'EMPLOYEE']
+        setUser({
+          ...authUser,
+          roles,
+          employeeCode: authUser.user_metadata?.employee_code || parsedHint?.employeeCode,
+          mustChangeCredentials: Boolean(authUser.user_metadata?.must_change_credentials || parsedHint?.mustChangeCredentials),
+          mustChangePassword: Boolean(authUser.user_metadata?.must_change_password || parsedHint?.mustChangePassword),
+        })
         setUserRoles(roles)
         setProfile({
           id: authUser.id,
@@ -82,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           first_name: (authUser.user_metadata?.full_name || parsedHint?.fullName || 'User').split(' ')[0],
           last_name: (authUser.user_metadata?.full_name || parsedHint?.fullName || '').split(' ').slice(1).join(' '),
           employee_code: authUser.user_metadata?.employee_code || parsedHint?.employeeCode,
-          role: roles[0] || 'SUPER_ADMIN',
+          role: roles[0] || 'EMPLOYEE',
         })
       } else if (!parsedHint) {
         setUser(null)

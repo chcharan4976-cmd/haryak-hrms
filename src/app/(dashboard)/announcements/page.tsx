@@ -11,6 +11,13 @@ import { EmptyState } from '@/components/shared/empty-state'
 import { PageHeader } from '@/components/shared/page-header'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { toast } from 'sonner'
 
 interface Announcement {
@@ -123,17 +130,20 @@ export default function AnnouncementsPage() {
 
               <div className="space-y-1">
                 <Label htmlFor="cat">Category</Label>
-                <select
-                  id="cat"
+                <Select
                   value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  className="w-full p-2 border rounded-md text-xs bg-background"
+                  onValueChange={(val) => setCategory(val)}
                 >
-                  <option value="General">General Corporate</option>
-                  <option value="HR Policy">HR Policy</option>
-                  <option value="Event">Holiday & Event</option>
-                  <option value="Executive">Executive Leadership</option>
-                </select>
+                  <SelectTrigger id="cat" className="w-full text-xs h-9">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="General">General Corporate</SelectItem>
+                    <SelectItem value="HR Policy">HR Policy</SelectItem>
+                    <SelectItem value="Event">Holiday & Event</SelectItem>
+                    <SelectItem value="Executive">Executive Leadership</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-1">
@@ -200,20 +210,20 @@ export default function AnnouncementsPage() {
         <div className="space-y-4">
           {announcements.map((ann) => (
             <Card key={ann.id} className={ann.is_pinned ? "border-blue-300 ring-1 ring-blue-100 shadow-sm" : "shadow-xs"}>
-              <CardContent className="p-6 space-y-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    {ann.is_pinned && <Pin className="w-4 h-4 text-blue-600 fill-current" />}
-                    <h3 className="font-bold text-base text-foreground">{ann.title}</h3>
+              <CardContent className="p-4 sm:p-6 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-2">
+                  <div className="flex items-start gap-2 min-w-0">
+                    {ann.is_pinned && <Pin className="w-4 h-4 text-blue-600 fill-current shrink-0 mt-0.5" />}
+                    <h3 className="font-bold text-base text-foreground break-words">{ann.title}</h3>
                   </div>
-                  <Badge variant="outline" className="text-[10px]">{ann.category}</Badge>
+                  <Badge variant="outline" className="text-[10px] self-start sm:self-auto shrink-0">{ann.category}</Badge>
                 </div>
 
-                <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{ann.content}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">{ann.content}</p>
 
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-3 border-t">
-                  <span>Author: {typeof ann.author === 'object' ? ann.author?.name || 'Admin' : ann.author || 'Admin'}</span>
-                  <span className="flex items-center gap-1">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2 text-[11px] text-muted-foreground pt-3 border-t">
+                  <span className="truncate">Author: {typeof ann.author === 'object' ? ann.author?.name || 'Admin' : ann.author || 'Admin'}</span>
+                  <span className="flex items-center gap-1 shrink-0">
                     <Calendar className="w-3 h-3" /> {new Date(ann.created_at).toLocaleDateString()}
                   </span>
                 </div>

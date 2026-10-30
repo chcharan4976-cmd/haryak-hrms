@@ -9,17 +9,28 @@ async function getLowestAvailableEmployeeCode(
   supabase: any,
   companyId: string
 ): Promise<string> {
-  const { data: company, error: companyError } = await supabase
+  // If generate_employee_code RPC is available, try it first
+  if (supabase?.rpc) {
+    try {
+      const { data: rpcCode, error: rpcErr } = await supabase.rpc(
+        'generate_employee_code',
+        { p_company_id: companyId }
+      )
+      if (!rpcErr && rpcCode) {
+        return rpcCode
+      }
+    } catch {
+      // Fall through to lowest available calculation
+    }
+  }
+
+  const { data: company } = await supabase
     .from('companies')
     .select('employee_id_prefix')
     .eq('id', companyId)
-    .single()
+    .maybeSingle()
 
-  if (companyError || !company) {
-    throw new Error('Company record not found while allocating employee ID.')
-  }
-
-  const prefix = String(company.employee_id_prefix || 'HRK')
+  const prefix = String(company?.employee_id_prefix || 'HRK')
     .trim()
     .toUpperCase()
 
@@ -194,7 +205,7 @@ export async function POST(request: Request) {
   let supabase: any = null
 
   try {
-    // Resolve authenticated user's company — do NOT trust client-supplied company_id
+    // Resolve authenticated user's company â€” do NOT trust client-supplied company_id
     const resolution = await resolveRequestContext()
     if (!resolution.ok) {
       return NextResponse.json(
@@ -227,7 +238,11 @@ export async function POST(request: Request) {
       annualCtc,
       monthlyGross: inputMonthlyGross,
       components,
+      pfApplicable,
+      ptApplicable,
       ptDeduction,
+      ptState,
+      esiApplicable,
       pan,
       // Bank details (optional)
       bankName,
@@ -236,7 +251,7 @@ export async function POST(request: Request) {
       accountHolderName,
     } = body
 
-    // Validation — require explicit values, no defaults
+    // Validation â€” require explicit values, no defaults
     if (!firstName?.trim()) {
       return NextResponse.json(
         { success: false, error: 'First name is required.' },
@@ -254,6 +269,53 @@ export async function POST(request: Request) {
     if (!joiningDate) {
       return NextResponse.json(
         { success: false, error: 'Joining date is required.' },
+        { status: 400 }
+      )
+    }
+
+    const normalizedPfApplicable = pfApplicable !== undefined ? Boolean(pfApplicable) : true
+    const normalizedPtAmount =
+      ptDeduction !== undefined &&
+      ptDeduction !== null &&
+      ptDeduction !== ''
+        ? Number(ptDeduction)
+        : null
+
+    const normalizedPtApplicable =
+      ptApplicable === true ||
+      (ptApplicable !== false && normalizedPtAmount !== null && normalizedPtAmount > 0)
+
+    const normalizedEsiApplicable = esiApplicable !== undefined ? Boolean(esiApplicable) : false
+
+    const normalizedPtState =
+      typeof ptState === 'string'
+        ? ptState.trim()
+        : ''
+
+    if (
+      normalizedPtApplicable &&
+      normalizedPtAmount !== null &&
+      (!Number.isFinite(normalizedPtAmount) || normalizedPtAmount < 0)
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Professional Tax amount must be a valid non-negative number when PT is applicable.',
+        },
+        { status: 400 }
+      )
+    }
+
+    if (
+      normalizedPtApplicable &&
+      normalizedPtAmount === null &&
+      !normalizedPtState
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'PT State or Professional Tax amount is required when Professional Tax is applicable.',
+        },
         { status: 400 }
       )
     }
@@ -297,7 +359,7 @@ export async function POST(request: Request) {
 
     // ============================================================
     // STEP 2: Create or locate Supabase Auth User
-    // Idempotent — if auth user already exists, reconcile carefully.
+    // Idempotent â€” if auth user already exists, reconcile carefully.
     // ============================================================
     authUserId = ''
     isExistingAuthUser = false
@@ -326,6 +388,7 @@ export async function POST(request: Request) {
         employee_code: newEmployeeCode,
         role: 'EMPLOYEE',
         must_change_password: true,
+        must_change_credentials: false,
       },
     })
 
@@ -368,6 +431,7 @@ export async function POST(request: Request) {
               employee_code: newEmployeeCode,
               role: 'EMPLOYEE',
               must_change_password: true,
+              must_change_credentials: false,
             },
           })
         } else {
@@ -405,7 +469,7 @@ export async function POST(request: Request) {
 
     if (userUpsertError) {
       console.error('Error upserting user record:', userUpsertError.message)
-      // Non-fatal — continue with employee creation
+      // Non-fatal â€” continue with employee creation
     }
 
     // ============================================================
@@ -549,18 +613,20 @@ export async function POST(request: Request) {
 
     // Ensure Auth metadata reflects the FINAL code after any retry.
     try {
-      const { data: authUserData } =
-        await supabase.auth.admin.getUserById(authUserId)
+      if (typeof supabase?.auth?.admin?.getUserById === 'function') {
+        const { data: authUserData } =
+          await supabase.auth.admin.getUserById(authUserId)
 
-      await supabase.auth.admin.updateUserById(authUserId, {
-        user_metadata: {
-          ...(authUserData?.user?.user_metadata || {}),
-          full_name: fullName,
-          employee_code: newEmployeeCode,
-          role: 'EMPLOYEE',
-          must_change_password: true,
-        },
-      })
+        await supabase.auth.admin.updateUserById(authUserId, {
+          user_metadata: {
+            ...(authUserData?.user?.user_metadata || {}),
+            full_name: fullName,
+            employee_code: newEmployeeCode,
+            role: 'EMPLOYEE',
+            must_change_password: true,
+          },
+        })
+      }
     } catch (metadataError) {
       console.error(
         'Warning: could not synchronize final employee code to auth metadata:',
@@ -646,27 +712,50 @@ export async function POST(request: Request) {
     // ============================================================
     // STEP 9: Create statutory details record (Truthful Values)
     // ============================================================
-    const ptVal = ptDeduction !== undefined && ptDeduction !== null && ptDeduction !== ''
-      ? Number(ptDeduction)
-      : null
-
     const cleanPan = pan?.trim()?.toUpperCase() || null
     const maskedPan = cleanPan && cleanPan.length >= 10
       ? `${cleanPan.substring(0, 2)}••••••${cleanPan.substring(8)}`
       : cleanPan
 
-    const { error: statErr } = await supabase.from('employee_statutory_details').insert({
+    const statutoryPayload: Record<string, any> = {
       employee_id: employeeTableId,
-      pf_applicable: true,
-      esi_applicable: false,
-      pt_applicable: ptVal !== null ? ptVal > 0 : true,
-      pt_state: 'Telangana',
+      pf_applicable: normalizedPfApplicable,
+      esi_applicable: normalizedEsiApplicable,
+      pt_applicable: normalizedPtApplicable,
+      pt_state: normalizedPtApplicable ? normalizedPtState : null,
+      pt_amount: normalizedPtApplicable ? normalizedPtAmount : null,
       pan_encrypted: cleanPan,
       pan_masked: maskedPan,
       tax_regime: 'new',
-    })
+    }
+
+    let { error: statErr } = await supabase
+      .from('employee_statutory_details')
+      .insert(statutoryPayload)
+
+    // Fallback: If pt_amount column is missing from schema cache during migration/cache refresh,
+    // retry without pt_amount so employee onboarding succeeds without hard failure.
+    if (
+      statErr &&
+      (statErr.message?.includes('pt_amount') ||
+        statErr.code === 'PGRST204' ||
+        statErr.code === '42703')
+    ) {
+      console.warn(
+        'Warning: pt_amount column not present in schema cache, retrying statutory insert without pt_amount:',
+        statErr.message
+      )
+      const fallbackPayload = { ...statutoryPayload }
+      delete fallbackPayload.pt_amount
+
+      const fallbackResult = await supabase
+        .from('employee_statutory_details')
+        .insert(fallbackPayload)
+      statErr = fallbackResult.error
+    }
+
     if (statErr) {
-      console.error('Warning: employee_statutory_details insert error:', statErr.message)
+      throw new Error(`Employee statutory details could not be saved: ${statErr.message}`)
     }
 
     // ============================================================
@@ -743,3 +832,4 @@ export async function POST(request: Request) {
     )
   }
 }
+

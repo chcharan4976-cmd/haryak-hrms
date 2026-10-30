@@ -48,6 +48,7 @@ export interface EmployeeProfileDTO {
     esiApplicable: boolean
     ptApplicable: boolean
     ptState: string | null
+    ptAmount?: number | null
     taxRegime: string | null
   } | null
   // Internal provenance details for development/admin diagnostics only

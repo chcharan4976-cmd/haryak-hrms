@@ -233,10 +233,49 @@ CREATE POLICY "Users view authorized documents" ON documents
   USING (
     company_id = (SELECT company_id FROM users WHERE id = auth.uid())
     AND (
-      visibility = 'company_wide'
+      visibility IN ('company_wide', 'company')
       OR employee_id = (SELECT employee_id FROM users WHERE id = auth.uid())
       OR public.is_admin_or_hr(auth.uid())
     )
+  );
+
+ALTER TABLE document_versions ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users view authorized document versions" ON document_versions;
+CREATE POLICY "Users view authorized document versions" ON document_versions
+  FOR SELECT TO authenticated
+  USING (
+    company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+    AND (
+      document_id IN (
+        SELECT id FROM documents WHERE
+          company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+          AND (
+            visibility IN ('company_wide', 'company')
+            OR employee_id = (SELECT employee_id FROM users WHERE id = auth.uid())
+            OR public.is_admin_or_hr(auth.uid())
+          )
+      )
+    )
+  );
+
+ALTER TABLE document_categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Users view company document categories" ON document_categories;
+CREATE POLICY "Users view company document categories" ON document_categories
+  FOR SELECT TO authenticated
+  USING (
+    company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+  );
+
+DROP POLICY IF EXISTS "Admins manage document categories" ON document_categories;
+CREATE POLICY "Admins manage document categories" ON document_categories
+  FOR ALL TO authenticated
+  USING (
+    company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+    AND public.is_admin_or_hr(auth.uid())
+  )
+  WITH CHECK (
+    company_id = (SELECT company_id FROM users WHERE id = auth.uid())
+    AND public.is_admin_or_hr(auth.uid())
   );
 
 -- ------------------------------------------------------------------------------

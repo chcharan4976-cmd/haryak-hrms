@@ -34,6 +34,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 import { useAuth } from '@/components/providers/auth-provider'
 
@@ -112,11 +119,11 @@ const INITIAL_FORM: FormData = {
   specialAllowance: '',
   conveyanceAllowance: '',
 
-  pfApplicable: true,
+  pfApplicable: false,
 
   ptApplicable: false,
   ptDeduction: '',
-  ptState: 'Telangana',
+  ptState: '',
 
   esiApplicable: false,
 
@@ -506,6 +513,13 @@ export default function NewEmployeePage() {
           )
           return false
         }
+
+        if (!formData.ptState.trim()) {
+          toast.error(
+            'PT State is required when Professional Tax is applicable.'
+          )
+          return false
+        }
       }
 
       const hasAnyBankValue =
@@ -841,7 +855,7 @@ export default function NewEmployeePage() {
 
           ptState:
             formData.ptApplicable
-              ? formData.ptState
+              ? formData.ptState.trim()
               : null,
 
           esiApplicable:
@@ -1043,7 +1057,7 @@ export default function NewEmployeePage() {
      ========================================================= */
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
+    <div className="mx-auto max-w-5xl space-y-6">
       {/* Header */}
 
       <div className="border-b pb-4">
@@ -1055,7 +1069,7 @@ export default function NewEmployeePage() {
           Back to Employee Directory
         </Link>
 
-        <h1 className="text-2xl font-bold tracking-tight">
+        <h1 className="text-xl sm:text-2xl font-bold tracking-tight break-words">
           Onboard New Employee
         </h1>
 
@@ -1082,20 +1096,20 @@ export default function NewEmployeePage() {
               >
                 <div
                   className={cn(
-                    'flex h-9 w-9 items-center justify-center rounded-full border-2 text-xs font-bold transition-all',
+                    'flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full border-2 text-xs font-bold transition-all',
 
                     index <
                       currentStep
                       ? 'border-[#1e2a78] bg-[#1e2a78] text-white'
                       : index ===
                           currentStep
-                        ? 'border-[#1e2a78] bg-background text-[#1e2a78] ring-4 ring-blue-100 dark:ring-blue-950'
+                        ? 'border-[#1e2a78] bg-background text-[#1e2a78] ring-2 sm:ring-4 ring-blue-100 dark:ring-blue-950'
                         : 'border-muted bg-muted text-muted-foreground'
                   )}
                 >
                   {index <
                   currentStep ? (
-                    <Check className="h-4 w-4" />
+                    <Check className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                   ) : (
                     index + 1
                   )}
@@ -1103,7 +1117,7 @@ export default function NewEmployeePage() {
 
                 <span
                   className={cn(
-                    'mt-2 text-center text-[11px] font-medium',
+                    'hidden sm:block mt-2 text-center text-[11px] font-medium',
 
                     index ===
                       currentStep
@@ -1117,10 +1131,13 @@ export default function NewEmployeePage() {
             )
           )}
         </ol>
+        <div className="sm:hidden text-center text-xs font-semibold text-[#1e2a78] dark:text-blue-400 mt-2">
+          Step {currentStep + 1} of {STEPS.length}: {STEPS[currentStep]}
+        </div>
       </nav>
 
       <Card>
-        <CardContent className="p-6 sm:p-8">
+        <CardContent className="p-4 sm:p-6 md:p-8">
           {/* ============================================
               STEP 1
              ============================================ */}
@@ -1565,7 +1582,7 @@ export default function NewEmployeePage() {
                   </p>
 
                   <p className="text-[11px] text-muted-foreground">
-                    Values are employee-specific and are never copied from another employee.
+                    Choose statutory applicability explicitly for this employee. No PF, PT or ESI setting is assumed automatically.
                   </p>
                 </div>
 
@@ -1600,6 +1617,10 @@ export default function NewEmployeePage() {
                     if (!value) {
                       handleChange(
                         'ptDeduction',
+                        ''
+                      )
+                      handleChange(
+                        'ptState',
                         ''
                       )
                     }
@@ -1930,10 +1951,26 @@ export default function NewEmployeePage() {
                   }
                 />
 
+                {formData.ptApplicable && (
+                  <ReviewItem
+                    label="PT State"
+                    value={formData.ptState.trim()}
+                  />
+                )}
+
                 <ReviewItem
                   label="PF"
                   value={
                     formData.pfApplicable
+                      ? 'Applicable'
+                      : 'Not Applicable'
+                  }
+                />
+
+                <ReviewItem
+                  label="ESI"
+                  value={
+                    formData.esiApplicable
                       ? 'Applicable'
                       : 'Not Applicable'
                   }
@@ -1977,11 +2014,12 @@ export default function NewEmployeePage() {
 
           {/* Navigation */}
 
-          <div className="mt-8 flex items-center justify-between border-t pt-4">
+          <div className="mt-8 flex flex-col-reverse sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t pt-4">
             <Button
               type="button"
               variant="outline"
               size="sm"
+              className="w-full sm:w-auto h-9"
               onClick={
                 prevStep
               }
@@ -2000,7 +2038,7 @@ export default function NewEmployeePage() {
               <Button
                 type="button"
                 size="sm"
-                className="bg-[#1e2a78] text-white hover:bg-[#152060]"
+                className="w-full sm:w-auto h-9 bg-[#1e2a78] text-white hover:bg-[#152060]"
                 onClick={
                   handleCreateEmployee
                 }
@@ -2028,7 +2066,7 @@ export default function NewEmployeePage() {
               <Button
                 type="button"
                 size="sm"
-                className="bg-[#1e2a78] text-white hover:bg-[#152060]"
+                className="w-full sm:w-auto h-9 bg-[#1e2a78] text-white hover:bg-[#152060]"
                 onClick={
                   nextStep
                 }
@@ -2363,35 +2401,30 @@ function SelectField({
         {label}
       </Label>
 
-      <select
-        value={value}
-        onChange={(
-          event
-        ) =>
-          onChange(
-            event.target.value
-          )
-        }
-        className="h-10 w-full rounded-md border bg-background px-3 text-xs"
-      >
-        {options.map(
-          ([
-            optionValue,
-            optionLabel,
-          ]) => (
-            <option
-              key={
-                optionValue
-              }
-              value={
-                optionValue
-              }
-            >
-              {optionLabel}
-            </option>
-          )
-        )}
-      </select>
+      <Select value={value} onValueChange={onChange}>
+        <SelectTrigger className="h-10 w-full text-xs">
+          <SelectValue placeholder="Select option" />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map(
+            ([
+              optionValue,
+              optionLabel,
+            ]) => (
+              <SelectItem
+                key={
+                  optionValue
+                }
+                value={
+                  optionValue
+                }
+              >
+                {optionLabel}
+              </SelectItem>
+            )
+          )}
+        </SelectContent>
+      </Select>
     </div>
   )
 }

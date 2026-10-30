@@ -195,15 +195,15 @@ export default function OrganizationPage() {
       </PageHeader>
 
       <Card>
-        <div className="border-b px-4 bg-muted/20">
-          <nav className="flex space-x-6 text-xs" aria-label="Tabs">
+        <div className="border-b px-3 sm:px-4 bg-muted/20">
+          <nav className="flex space-x-3 sm:space-x-6 text-xs overflow-x-auto no-scrollbar" aria-label="Tabs">
             <button
               onClick={() => setActiveTab('departments')}
               className={cn(
                 activeTab === 'departments'
                   ? 'border-[#1e2a78] text-[#1e2a78] font-bold border-b-2 dark:text-blue-400 dark:border-blue-400'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
-                'py-3 px-1 font-medium flex items-center gap-1.5 transition-colors'
+                'py-3 px-1 font-medium flex items-center gap-1.5 transition-colors shrink-0 whitespace-nowrap'
               )}
             >
               <Building2 className="w-3.5 h-3.5" /> Departments ({departments.length})
@@ -214,7 +214,7 @@ export default function OrganizationPage() {
                 activeTab === 'designations'
                   ? 'border-[#1e2a78] text-[#1e2a78] font-bold border-b-2 dark:text-blue-400 dark:border-blue-400'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
-                'py-3 px-1 font-medium flex items-center gap-1.5 transition-colors'
+                'py-3 px-1 font-medium flex items-center gap-1.5 transition-colors shrink-0 whitespace-nowrap'
               )}
             >
               <Briefcase className="w-3.5 h-3.5" /> Designations ({designations.length})
@@ -225,7 +225,7 @@ export default function OrganizationPage() {
                 activeTab === 'locations'
                   ? 'border-[#1e2a78] text-[#1e2a78] font-bold border-b-2 dark:text-blue-400 dark:border-blue-400'
                   : 'border-transparent text-muted-foreground hover:text-foreground',
-                'py-3 px-1 font-medium flex items-center gap-1.5 transition-colors'
+                'py-3 px-1 font-medium flex items-center gap-1.5 transition-colors shrink-0 whitespace-nowrap'
               )}
             >
               <MapPin className="w-3.5 h-3.5" /> Locations ({locations.length})
@@ -233,7 +233,7 @@ export default function OrganizationPage() {
           </nav>
         </div>
 
-        <CardContent className="p-6">
+        <CardContent className="p-4 sm:p-6">
           {loading ? (
             <div className="flex items-center justify-center py-12 text-muted-foreground text-xs">
               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
@@ -251,7 +251,7 @@ export default function OrganizationPage() {
                     </div>
                   ) : (
                     <table className="w-full text-xs text-left">
-                      <thead className="bg-muted/50 border-b text-muted-foreground uppercase font-semibold text-[10px]">
+                      <thead className="bg-muted/30 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
                         <tr>
                           <th className="px-4 py-3">Department Name</th>
                           <th className="px-4 py-3">Code</th>
@@ -288,7 +288,7 @@ export default function OrganizationPage() {
                     </div>
                   ) : (
                     <table className="w-full text-xs text-left">
-                      <thead className="bg-muted/50 border-b text-muted-foreground uppercase font-semibold text-[10px]">
+                      <thead className="bg-muted/30 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
                         <tr>
                           <th className="px-4 py-3">Designation</th>
                           <th className="px-4 py-3">Level Band</th>

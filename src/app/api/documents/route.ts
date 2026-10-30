@@ -12,13 +12,11 @@ import {
   isAdmin,
 } from '@/lib/services/company-resolver'
 
-type DocumentLifecycleStatus =
-  | 'DRAFT'
-  | 'PENDING_APPROVAL'
-  | 'APPROVED'
-  | 'ISSUED'
-  | 'ACKNOWLEDGED'
-  | 'SUPERSEDED'
+import {
+  computeExpiryStatus,
+  getCategoryLabel,
+  type DocumentLifecycleStatus,
+} from '@/lib/types/document'
 
 function parseMetadata(
   description: unknown
@@ -28,8 +26,7 @@ function parseMetadata(
   }
 
   if (
-    typeof description ===
-    'object'
+    typeof description === 'object'
   ) {
     return {
       ...(description as Record<string, any>),
@@ -37,20 +34,11 @@ function parseMetadata(
   }
 
   try {
-    const parsed =
-      JSON.parse(
-        String(
-          description
-        )
-      )
-
+    const parsed = JSON.parse(String(description))
     return (
       parsed &&
-      typeof parsed ===
-        'object' &&
-      !Array.isArray(
-        parsed
-      )
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed)
     )
       ? parsed
       : {}
@@ -62,47 +50,58 @@ function parseMetadata(
 function normalizeStatus(
   value: unknown
 ): DocumentLifecycleStatus {
-  const normalized =
-    String(
-      value ||
-      ''
-    )
-      .trim()
-      .toUpperCase()
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
 
-  const valid:
-    DocumentLifecycleStatus[] =
-    [
-      'DRAFT',
-      'PENDING_APPROVAL',
-      'APPROVED',
-      'ISSUED',
-      'ACKNOWLEDGED',
-      'SUPERSEDED',
-    ]
+  const valid: DocumentLifecycleStatus[] = [
+    'DRAFT',
+    'UPLOADED',
+    'PENDING_VERIFICATION',
+    'VERIFIED',
+    'REJECTED',
+    'REPLACEMENT_REQUESTED',
+    'EXPIRED',
+    'ARCHIVED',
+    'APPROVED',
+    'ISSUED',
+    'ACKNOWLEDGED',
+    'SUPERSEDED',
+  ]
 
-  return valid.includes(
-    normalized as DocumentLifecycleStatus
-  )
-    ? (
-        normalized as DocumentLifecycleStatus
-      )
+  return valid.includes(normalized as DocumentLifecycleStatus)
+    ? (normalized as DocumentLifecycleStatus)
     : 'DRAFT'
+}
+
+function resolveLifecycleStatus(rowStatus: unknown, metaStatus: unknown): DocumentLifecycleStatus {
+  const normMeta = metaStatus ? normalizeStatus(metaStatus) : null
+  const normRow = rowStatus ? normalizeStatus(rowStatus) : null
+
+  if (normMeta === 'ACKNOWLEDGED' || normRow === 'ACKNOWLEDGED') return 'ACKNOWLEDGED'
+  if (normMeta === 'ISSUED' || normRow === 'ISSUED') return 'ISSUED'
+  if (normMeta === 'APPROVED' || normRow === 'APPROVED') return 'APPROVED'
+  if (normMeta === 'VERIFIED' || normRow === 'VERIFIED') return 'VERIFIED'
+  if (normMeta === 'REJECTED' || normRow === 'REJECTED') return 'REJECTED'
+  if (normMeta === 'PENDING_VERIFICATION' || normRow === 'PENDING_VERIFICATION') return 'PENDING_VERIFICATION'
+  if (normMeta && normMeta !== 'DRAFT') return normMeta
+  if (normRow && normRow !== 'DRAFT') return normRow
+  return normRow || normMeta || 'DRAFT'
 }
 
 function mapDocument(
   row: any,
   meta: Record<string, any>
 ) {
+  const status = resolveLifecycleStatus(row.status, meta.status)
+  const expiryDate = row.expiry_date || meta.expiryDate || meta.expiry_date || null
+  const expiryInfo = computeExpiryStatus(expiryDate)
+  const categoryCode = row.category || meta.category || 'employment_hr'
+
   return {
-    id:
-      row.id,
-
-    companyId:
-      row.company_id,
-
-    employeeId:
-      row.employee_id,
+    id: row.id,
+    companyId: row.company_id,
+    employeeId: row.employee_id,
 
     employeeCode:
       row.employees?.employee_code ||
@@ -116,23 +115,62 @@ function mapDocument(
       meta.employeeName ||
       '',
 
+    employeeEmail:
+      row.employees?.official_email ||
+      meta.content?.employeeEmail ||
+      '',
+
+    departmentName:
+      row.employees?.departments?.name ||
+      row.employees?.department ||
+      meta.content?.departmentName ||
+      '',
+
+    designationName:
+      row.employees?.designations?.name ||
+      row.employees?.designation ||
+      meta.content?.designationName ||
+      '',
+
+    category: categoryCode,
+    categoryName: getCategoryLabel(categoryCode),
+    subcategory: row.subcategory || meta.subcategory || null,
+
     documentType:
       meta.documentType ||
       meta.document_type ||
       row.document_type ||
+      categoryCode ||
       'custom_letter',
 
     documentNumber:
       meta.documentNumber ||
       meta.referenceNumber ||
       meta.document_number ||
+      row.reference_number ||
       row.document_number ||
       `HRK/DOC/${String(row.id || '').slice(0, 6)}`,
+
+    referenceNumber:
+      row.reference_number ||
+      meta.referenceNumber ||
+      meta.documentNumber ||
+      null,
+
+    issuingAuthority:
+      row.issuing_authority ||
+      meta.issuingAuthority ||
+      'Haryak Technologies India Private Limited',
 
     title:
       row.title ||
       meta.subject ||
       'Official Document',
+
+    description:
+      typeof meta.description === 'string'
+        ? meta.description
+        : row.title || '',
 
     fileName:
       row.file_name ||
@@ -144,29 +182,91 @@ function mapDocument(
       meta.fileUrl ||
       null,
 
+    fileSize:
+      Number(row.file_size || meta.fileSize || 0),
+
+    mimeType:
+      row.mime_type ||
+      meta.mimeType ||
+      'application/pdf',
+
+    checksumSha256:
+      row.checksum_sha256 ||
+      meta.checksumSha256 ||
+      meta.fileHash ||
+      null,
+
     version:
       Number(
-        meta.version ||
         row.version ||
+        meta.version ||
         1
       ),
 
-    status:
-      normalizeStatus(
-        meta.status
-      ),
+    status,
+
+    verificationStatus:
+      row.verification_status ||
+      meta.verificationStatus ||
+      (status === 'VERIFIED' ? 'verified' : status === 'REJECTED' ? 'rejected' : 'unverified'),
+
+    verifiedBy:
+      row.verified_by ||
+      meta.verifiedBy ||
+      null,
+
+    verifiedAt:
+      row.verified_at ||
+      meta.verifiedAt ||
+      null,
+
+    verificationNotes:
+      row.verification_notes ||
+      meta.verificationNotes ||
+      null,
+
+    rejectionReason:
+      row.rejection_reason ||
+      meta.rejectionReason ||
+      null,
+
+    replacementRequestedAt:
+      row.replacement_requested_at ||
+      meta.replacementRequestedAt ||
+      null,
+
+    replacementReason:
+      row.replacement_reason ||
+      meta.replacementReason ||
+      null,
 
     issueDate:
+      row.issue_date ||
       meta.issueDate ||
       meta.issue_date ||
-      row.issue_date ||
       row.created_at?.split('T')[0] ||
       '',
 
     effectiveDate:
+      row.effective_date ||
       meta.effectiveDate ||
       meta.effective_date ||
       '',
+
+    expiryDate,
+    expiryStatus: expiryInfo.status,
+    daysUntilExpiry: expiryInfo.daysRemaining,
+
+    isArchived:
+      Boolean(row.is_archived || meta.isArchived),
+
+    archivedAt:
+      row.archived_at ||
+      meta.archivedAt ||
+      null,
+
+    retentionPeriodMonths:
+      Number(row.retention_period_months || meta.retentionPeriodMonths || 84),
 
     generatedAt:
       meta.generatedAt ||
@@ -185,11 +285,13 @@ function mapDocument(
       null,
 
     acknowledgedAt:
+      row.acknowledged_at ||
       meta.acknowledgedAt ||
       meta.acknowledged_at ||
       null,
 
     acknowledgedBy:
+      row.acknowledged_by ||
       meta.acknowledgedBy ||
       meta.acknowledged_by ||
       null,
@@ -198,7 +300,6 @@ function mapDocument(
       meta.content ||
       meta.documentContent ||
       meta.document_content ||
-      row.document_content ||
       null,
 
     letterheadVersion:
@@ -215,292 +316,222 @@ function mapDocument(
 
     visibility:
       row.visibility ||
-      'internal',
+      'private',
 
-    createdAt:
-      row.created_at,
-
-    updatedAt:
-      row.updated_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }
 }
 
-export async function GET(
-  request: NextRequest
-) {
-  const resolved =
-    await resolveRequestContext()
+export async function GET(request: NextRequest) {
+  const resolved = await resolveRequestContext()
 
-  if (
-    !resolved.ok
-  ) {
+  if (!resolved.ok) {
     return NextResponse.json(
       {
-        success:
-          false,
-
-        error:
-          resolved.error.message,
+        success: false,
+        error: resolved.error.message,
       },
       {
-        status:
-          resolved.error.status,
+        status: resolved.error.status,
       }
     )
   }
 
-  const {
-    context,
-  } =
-    resolved
+  const { context } = resolved
+  const userIsAdmin = isAdmin(context)
 
-  const userIsAdmin =
-    isAdmin(
-      context
-    )
+  const { searchParams } = new URL(request.url)
+  const employeeIdParam = searchParams.get('employee_id')
+  const typeParam = searchParams.get('type')
+  const categoryParam = searchParams.get('category')
+  const statusParam = searchParams.get('status')
+  const expiryParam = searchParams.get('expiry')
+  const includeArchived = searchParams.get('archived') === 'true'
+  const searchParam = searchParams.get('search')?.trim().toLowerCase()
 
-  const {
-    searchParams,
-  } =
-    new URL(
-      request.url
-    )
-
-  const employeeIdParam =
-    searchParams.get(
-      'employee_id'
-    )
-
-  const typeParam =
-    searchParams.get(
-      'type'
-    )
-
-  const statusParam =
-    searchParams.get(
-      'status'
-    )
-
-  const supabase =
-    createAdminClient()
-
-  if (
-    !supabase
-  ) {
+  const supabase = createAdminClient()
+  if (!supabase) {
     return NextResponse.json(
       {
-        success:
-          false,
-
-        error:
-          'Database unavailable.',
+        success: false,
+        error: 'Database unavailable.',
       },
       {
-        status:
-          503,
+        status: 503,
       }
     )
   }
 
-  let query =
-    supabase
-      .from(
-        'documents'
+  let query = supabase
+    .from('documents')
+    .select(`
+      *,
+      employees:employee_id(
+        id,
+        user_id,
+        employee_code,
+        full_name,
+        official_email,
+        department_id,
+        designation_id,
+        is_active,
+        employment_status,
+        departments:department_id(name),
+        designations:designation_id(name)
       )
-      .select(`
-        *,
-        employees:employee_id(
-          id,
-          user_id,
-          employee_code,
-          full_name,
-          official_email,
-          department_id,
-          designation_id,
-          is_active,
-          employment_status
-        )
-      `)
-      .eq(
-        'company_id',
-        context.companyId
-      )
-      .neq(
-        'document_type',
-        'letterhead'
-      )
-      .order(
-        'created_at',
-        {
-          ascending:
-            false,
-        }
-      )
+    `)
+    .eq('company_id', context.companyId)
+    .neq('document_type', 'letterhead')
+    .order('created_at', { ascending: false })
 
   /* ============================================================
      ADMIN QUERY
      ============================================================ */
-
-  if (
-    userIsAdmin
-  ) {
-    if (
-      employeeIdParam
-    ) {
-      query =
-        query.eq(
-          'employee_id',
-          employeeIdParam
-        )
+  if (userIsAdmin) {
+    if (employeeIdParam) {
+      query = query.eq('employee_id', employeeIdParam)
     }
 
-    if (
-      typeParam
-    ) {
-      query =
-        query.eq(
-          'document_type',
-          typeParam
-        )
+    if (typeParam) {
+      query = query.eq('document_type', typeParam)
+    }
+
+    if (categoryParam && categoryParam !== 'ALL') {
+      query = query.eq('category', categoryParam)
     }
   } else {
     /* ==========================================================
        EMPLOYEE PORTAL — STRICT SERVER-SIDE ISOLATION
        ========================================================== */
-
-    if (
-      !context.employeeId
-    ) {
+    if (!context.employeeId) {
       return NextResponse.json({
-        success:
-          true,
-
-        documents:
-          [],
-
-        total:
-          0,
+        success: true,
+        documents: [],
+        total: 0,
       })
     }
 
     /**
-     * Critical:
-     * Employee identity comes ONLY from resolved authenticated
-     * server context. Ignore employee_id query-string values.
+     * Strict isolation:
+     * Non-admin employee can only see their own documents or company-wide documents/policies.
      */
-    query =
-      query
-        .eq(
-          'employee_id',
-          context.employeeId
-        )
-        .eq(
-          'visibility',
-          'employee'
-        )
+    query = query.or(
+      `employee_id.eq.${context.employeeId},visibility.in.(company,company_wide,all),category.eq.company_policy`
+    )
   }
 
-  const {
-    data,
-    error,
-  } =
-    await query
+  const { data, error } = await query
 
-  if (
-    error
-  ) {
-    console.error(
-      '[GET /api/documents] Query failed:',
-      error
-    )
-
+  if (error) {
+    console.error('[GET /api/documents] Query failed:', error)
     return NextResponse.json(
       {
-        success:
-          false,
-
-        error:
-          `Unable to load documents: ${error.message}`,
+        success: false,
+        error: `Unable to load documents: ${error.message}`,
       },
       {
-        status:
-          500,
+        status: 500,
       }
     )
   }
 
-  const mapped =
-    (
-      data ||
-      []
-    ).map(
-      (
-        row:
-          any
-      ) => {
-        const meta =
-          parseMetadata(
-            row.description
-          )
-
-        return mapDocument(
-          row,
-          meta
-        )
-      }
-    )
+  const mapped = (data || []).map((row: any) => {
+    const meta = parseMetadata(row.description)
+    return mapDocument(row, meta)
+  })
 
   /* ============================================================
-     AUTHORITATIVE LIFECYCLE FILTERING
+     AUTHORITATIVE LIFECYCLE & SEARCH FILTERING
      ============================================================ */
+  let list = mapped.filter(document => {
+    // 1. Archival filter
+    if (!includeArchived && document.isArchived) {
+      return false
+    }
 
-  const list =
-    mapped.filter(
-      document => {
-        if (
-          userIsAdmin
-        ) {
-          if (
-            statusParam
-          ) {
-            return (
-              document.status ===
-              normalizeStatus(
-                statusParam
-              )
-            )
-          }
-
-          return true
+    // 2. Admin vs Employee visibility
+    if (userIsAdmin) {
+      if (statusParam && statusParam !== 'ALL') {
+        const targetStatus = normalizeStatus(statusParam)
+        if (document.status !== targetStatus) {
+          return false
         }
+      }
+    } else {
+      /**
+       * Non-admin employee access rules:
+       * - Company policies: visible
+       * - Uploaded documents by/for this employee: visible (tracked with lifecycle status)
+       * - Official generated letters: visible if ISSUED, ACKNOWLEDGED, or APPROVED.
+       *   Draft or internal pending letters remain hidden.
+       */
+      const isCompanyDoc =
+        document.visibility === 'company' ||
+        document.visibility === 'company_wide' ||
+        document.visibility === 'all' ||
+        document.category === 'company_policy'
 
-        /**
-         * NEVER default an employee document to ISSUED.
-         *
-         * If metadata status is missing/corrupt, normalizeStatus()
-         * returns DRAFT and this record stays hidden.
-         */
+      if (isCompanyDoc) {
+        return true
+      }
+
+      const isGeneratedLetter = [
+        'offer_letter',
+        'appointment_letter',
+        'joining_letter',
+        'salary_revision',
+        'relieving_letter',
+        'experience_letter',
+        'resignation_acceptance',
+        'custom_letter',
+      ].includes(document.documentType)
+
+      if (isGeneratedLetter) {
         return (
-          document.visibility ===
-            'employee' &&
-          (
-            document.status ===
-              'ISSUED' ||
-            document.status ===
-              'ACKNOWLEDGED'
-          )
+          document.status === 'ISSUED' ||
+          document.status === 'ACKNOWLEDGED' ||
+          document.status === 'APPROVED' ||
+          document.visibility === 'employee'
         )
       }
-    )
+
+      // Uploaded employee documents (PAN, Aadhaar, certificates) are visible so employee can track verification
+      return true
+    }
+
+    return true
+  })
+
+  // 3. Expiry filtering
+  if (expiryParam && expiryParam !== 'ALL') {
+    list = list.filter(doc => doc.expiryStatus.toLowerCase() === expiryParam.toLowerCase())
+  }
+
+  // 4. In-memory search filtering (by title, ref no, employee name/code)
+  if (searchParam) {
+    list = list.filter(doc => {
+      return (
+        (doc.title && doc.title.toLowerCase().includes(searchParam)) ||
+        (doc.documentNumber && doc.documentNumber.toLowerCase().includes(searchParam)) ||
+        (doc.employeeName && doc.employeeName.toLowerCase().includes(searchParam)) ||
+        (doc.employeeCode && doc.employeeCode.toLowerCase().includes(searchParam)) ||
+        (doc.categoryName && doc.categoryName.toLowerCase().includes(searchParam))
+      )
+    })
+  }
 
   return NextResponse.json({
-    success:
-      true,
-
-    documents:
-      list,
-
-    total:
-      list.length,
+    success: true,
+    documents: list,
+    total: list.length,
+    stats: {
+      total: list.length,
+      pendingVerification: list.filter(d => d.status === 'PENDING_VERIFICATION' || d.status === 'UPLOADED').length,
+      verified: list.filter(d => d.status === 'VERIFIED').length,
+      rejected: list.filter(d => d.status === 'REJECTED' || d.status === 'REPLACEMENT_REQUESTED').length,
+      expiringSoon: list.filter(d => d.expiryStatus === 'EXPIRING_SOON').length,
+      expired: list.filter(d => d.expiryStatus === 'EXPIRED').length,
+    },
   })
 }

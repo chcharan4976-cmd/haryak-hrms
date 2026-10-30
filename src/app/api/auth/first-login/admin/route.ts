@@ -15,10 +15,12 @@ export async function POST(request: Request) {
       )
     }
 
+    const cookiesToSet: { name: string; value: string; options?: any }[] = []
     const result = await updateInitialAdminCredentials(
       validation.data.currentPassword,
       validation.data.newEmail,
-      validation.data.newPassword
+      validation.data.newPassword,
+      (c) => cookiesToSet.push(...c)
     )
 
     if (!result.success) {
@@ -35,9 +37,26 @@ export async function POST(request: Request) {
       redirectUrl: '/dashboard',
     })
 
-    // Propagate all cookies (including newly issued sb-*-auth-token from re-authentication)
+    // 1. Explicitly attach all Supabase SSR cookies produced during re-authentication
+    const allCookiesToSet = [...cookiesToSet, ...(result.cookiesToSet || [])]
+    allCookiesToSet.forEach(({ name, value, options }) => {
+      response.cookies.set(name, value, {
+        ...options,
+        path: '/',
+        sameSite: options?.sameSite || 'lax',
+        secure: process.env.NODE_ENV === 'production',
+      })
+    })
+
+    // 2. Propagate all remaining cookies from cookieStore with path: '/'
     for (const cookie of cookieStore.getAll()) {
-      response.cookies.set(cookie.name, cookie.value)
+      if (!response.cookies.has(cookie.name)) {
+        response.cookies.set(cookie.name, cookie.value, {
+          path: '/',
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+        })
+      }
     }
 
     if (result.user) {
@@ -46,6 +65,8 @@ export async function POST(request: Request) {
         email: result.user.email,
         fullName: result.user.fullName,
         roles: result.user.roles,
+        mustChangeCredentials: false,
+        mustChangePassword: false,
       })
       response.cookies.set('haryak_session', encodeURIComponent(sessionData), {
         httpOnly: false,

@@ -414,13 +414,13 @@ export function EmployeeBankDetailsCard({
   return (
     <>
       <Card className="h-full">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 border-b">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 space-y-0 border-b">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700 dark:bg-blue-950/30 dark:text-blue-300 shrink-0">
               <Building2 className="h-4 w-4" />
             </div>
 
-            <CardTitle className="text-sm">
+            <CardTitle className="text-sm truncate">
               Bank Details
             </CardTitle>
           </div>
@@ -430,6 +430,7 @@ export function EmployeeBankDetailsCard({
               type="button"
               size="sm"
               variant="outline"
+              className="w-full sm:w-auto"
               onClick={
                 openEditor
               }

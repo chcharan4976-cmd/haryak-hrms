@@ -2049,6 +2049,9 @@ export default function PayrollRunPage() {
             }
           )}
         </div>
+        <div className="md:hidden text-center text-xs font-semibold text-[#1e2a78] dark:text-blue-400 mt-2">
+          Step {currentStep + 1} of {STEPS.length}: {STEPS[currentStep]}
+        </div>
       </div>
 
       {/* =====================================================
@@ -2058,8 +2061,8 @@ export default function PayrollRunPage() {
         0 && (
         <div className="mx-auto max-w-5xl space-y-4">
           <Card>
-            <CardHeader>
-              <CardTitle className="text-lg font-bold">
+            <CardHeader className="p-4 sm:p-6">
+              <CardTitle className="text-base sm:text-lg font-bold">
                 Select Payroll Period & Employees
               </CardTitle>
 
@@ -2068,7 +2071,7 @@ export default function PayrollRunPage() {
               </CardDescription>
             </CardHeader>
 
-            <CardContent className="space-y-5">
+            <CardContent className="space-y-5 p-4 sm:p-6 pt-0 sm:pt-0">
               <div className="grid gap-4 md:grid-cols-[260px_1fr]">
                 <div className="space-y-2">
                   <label className="text-xs font-semibold text-foreground">
@@ -2090,7 +2093,7 @@ export default function PayrollRunPage() {
                   />
                 </div>
 
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div className="rounded-xl border bg-muted/40 p-3">
                     <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                       Active Employees
@@ -2577,7 +2580,7 @@ export default function PayrollRunPage() {
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[1250px] text-xs">
                   <thead>
-                    <tr className="border-b bg-muted/70 text-left text-muted-foreground">
+                    <tr className="border-b bg-muted/30 text-left text-muted-foreground">
                       <th className="w-10 p-3"></th>
 
                       <th className="p-3 font-semibold">

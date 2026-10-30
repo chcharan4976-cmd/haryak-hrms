@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { CommandSearch } from './command-search'
+import { NotificationBell } from '@/components/notifications/notification-bell'
 import { useState } from 'react'
 
 interface TopNavProps {
@@ -31,19 +32,22 @@ export function TopNav({ onMobileMenuToggle }: TopNavProps) {
     : user?.email?.charAt(0).toUpperCase() || 'U'
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-background px-4 sm:px-6">
-      <Button variant="ghost" size="icon" className="md:hidden" onClick={onMobileMenuToggle}>
+    <header className="sticky top-0 z-30 flex h-16 items-center gap-2 sm:gap-4 border-b bg-background px-3 sm:px-6">
+      <Button variant="ghost" size="icon" className="md:hidden h-10 w-10 shrink-0" onClick={onMobileMenuToggle}>
         <Menu className="h-5 w-5" />
         <span className="sr-only">Toggle menu</span>
       </Button>
 
-      <Breadcrumbs />
+      <div className="min-w-0 flex-1 flex items-center">
+        <Breadcrumbs />
+      </div>
 
-      <div className="flex flex-1 items-center justify-end space-x-4">
+      <div className="flex items-center justify-end gap-1 sm:gap-3 shrink-0">
         <Button
           variant="outline"
-          className="relative h-9 w-9 p-0 xl:h-10 xl:w-60 xl:justify-start xl:px-3 xl:py-2 text-muted-foreground"
+          className="relative h-9 w-9 p-0 xl:h-10 xl:w-60 xl:justify-start xl:px-3 xl:py-2 text-muted-foreground shrink-0"
           onClick={() => setCommandOpen(true)}
+          aria-label="Search"
         >
           <Search className="h-4 w-4 xl:mr-2" />
           <span className="hidden xl:inline-flex">Search...</span>
@@ -53,17 +57,13 @@ export function TopNav({ onMobileMenuToggle }: TopNavProps) {
         </Button>
         <CommandSearch open={commandOpen} onOpenChange={setCommandOpen} />
 
-        <Button variant="ghost" size="icon" className="relative">
-          <Bell className="h-5 w-5" />
-          <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-red-600" />
-          <span className="sr-only">Notifications</span>
-        </Button>
+        <NotificationBell portal={false} />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-              <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+            <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0">
+              <Sun className="h-[1.1rem] w-[1.1rem] sm:h-[1.2rem] sm:w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
+              <Moon className="absolute h-[1.1rem] w-[1.1rem] sm:h-[1.2rem] sm:w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
               <span className="sr-only">Toggle theme</span>
             </Button>
           </DropdownMenuTrigger>

@@ -12,6 +12,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { toast } from 'sonner'
 
 export default function SettingsPage() {
@@ -135,10 +142,10 @@ export default function SettingsPage() {
         </p>
       </div>
 
-      <div className="flex flex-col md:flex-row gap-6">
+      <div className="flex flex-col md:flex-row gap-4 sm:gap-6">
         {/* Navigation Sidebar */}
         <div className="w-full md:w-64 shrink-0">
-          <nav className="space-y-1">
+          <nav className="flex md:flex-col overflow-x-auto no-scrollbar gap-1 md:gap-0 md:space-y-1 pb-1 md:pb-0">
             {tabs.map((tab) => {
               const Icon = tab.icon
               return (
@@ -149,11 +156,11 @@ export default function SettingsPage() {
                     activeTab === tab.id
                       ? 'bg-[#1e2a78] text-white font-semibold'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                    'group flex items-center px-3 py-2.5 text-xs font-medium rounded-lg w-full transition-colors'
+                    'group flex items-center px-3 py-2.5 text-xs font-medium rounded-lg w-auto md:w-full shrink-0 whitespace-nowrap transition-colors'
                   )}
                 >
-                  <Icon className={cn("shrink-0 mr-2.5 h-4 w-4", activeTab === tab.id ? 'text-white' : 'text-muted-foreground')} />
-                  <span className="truncate">{tab.label}</span>
+                  <Icon className={cn("shrink-0 mr-2 h-3.5 w-3.5 sm:mr-2.5 sm:h-4 sm:w-4", activeTab === tab.id ? 'text-white' : 'text-muted-foreground')} />
+                  <span>{tab.label}</span>
                 </button>
               )
             })}
@@ -161,7 +168,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Content Area */}
-        <div className="flex-1 bg-card border rounded-xl shadow-sm p-6">
+        <div className="flex-1 bg-card border rounded-xl shadow-sm p-4 sm:p-6 min-w-0">
           {/* TAB 1: COMPANY PROFILE */}
           {activeTab === 'company' && (
             <div className="space-y-6 max-w-2xl text-xs">
@@ -406,15 +413,19 @@ export default function SettingsPage() {
                   </div>
                   <div className="space-y-1">
                     <Label>Automated Payslip Release Rule</Label>
-                    <select 
+                    <Select 
                       value={releaseRule} 
-                      onChange={(e) => setReleaseRule(e.target.value)}
-                      className="w-full p-2 border rounded-md text-xs bg-background"
+                      onValueChange={(val) => setReleaseRule(val)}
                     >
-                      <option value="first_of_next_month">1st Day of Following Month (Default)</option>
-                      <option value="immediate_on_approval">Immediately Upon Super Admin Approval</option>
-                      <option value="custom_date">Custom Scheduled Date</option>
-                    </select>
+                      <SelectTrigger className="w-full text-xs h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="first_of_next_month">1st Day of Following Month (Default)</SelectItem>
+                        <SelectItem value="immediate_on_approval">Immediately Upon Super Admin Approval</SelectItem>
+                        <SelectItem value="custom_date">Custom Scheduled Date</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
 

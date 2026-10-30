@@ -60,6 +60,14 @@ import {
 } from '@/components/ui/tabs'
 
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+
+import {
   cn,
 } from '@/lib/utils'
 
@@ -95,6 +103,12 @@ interface TimesheetEntry {
   hours?: number
   isBillable?: boolean
   is_billable?: boolean
+  isLeave?: boolean
+  leaveTypeId?: string | null
+  leaveTypeName?: string | null
+  leaveTypeCode?: string | null
+  leaveReason?: string | null
+  isPaid?: boolean
 }
 
 interface AdminTimesheet {
@@ -130,6 +144,9 @@ interface AdminTimesheet {
 interface MissingDaySummary {
   expectedWorkingDates: string[]
   workedDates: string[]
+  leaveDates: string[]
+  paidLeaveDates: string[]
+  unpaidLeaveDates: string[]
   pendingDates: string[]
 }
 
@@ -344,6 +361,50 @@ function formatDateTime(
 function mapEntry(
   raw: any
 ): TimesheetEntry {
+  let isLeave = Boolean(
+    raw?.is_leave ??
+    raw?.isLeave ??
+    (raw?.taskCategory === 'Leave' || raw?.task_category === 'Leave')
+  )
+  let leaveTypeId = raw?.leave_type_id ?? raw?.leaveTypeId ?? null
+  let leaveTypeName = raw?.leave_type_name ?? raw?.leaveTypeName ?? null
+  let leaveTypeCode = raw?.leave_type_code ?? raw?.leaveTypeCode ?? null
+  let leaveReason = raw?.leave_reason ?? raw?.leaveReason ?? null
+  let isPaid: boolean | undefined =
+    raw?.is_paid !== undefined
+      ? Boolean(raw.is_paid)
+      : raw?.isPaid !== undefined
+      ? Boolean(raw.isPaid)
+      : undefined
+
+  const desc = String(raw?.description || '')
+  if (desc.startsWith('[LEAVE|')) {
+    isLeave = true
+    const idCodeMatch = desc.match(/^\[LEAVE\|id:([^|]*)\|code:([^|]*)\|name:([^|]*)\|paid:([^\]]*)\]\s*(.*)$/)
+    if (idCodeMatch) {
+      const [, id, code, name, paid, rest] = idCodeMatch
+      leaveTypeId = id || leaveTypeId
+      leaveTypeCode = code || leaveTypeCode
+      leaveTypeName = name || leaveTypeName
+      isPaid = paid === '1' ? true : paid === '0' ? false : undefined
+      leaveReason = rest || leaveReason
+    } else {
+      const genericMatch = desc.match(/^\[LEAVE\|([^|]+)\|([^|]+)\|([^|]*)\|([^\]]*)\](?:\s*(.*))?$/)
+      if (genericMatch) {
+        leaveTypeCode = genericMatch[1] || leaveTypeCode
+        leaveTypeName = genericMatch[2] || leaveTypeName
+        isPaid = genericMatch[3] === 'PAID' || genericMatch[3] === '1'
+        leaveReason = genericMatch[4] || leaveReason
+      }
+    }
+  }
+
+  if (isLeave && isPaid === undefined) {
+    const code = String(leaveTypeCode || '').toUpperCase()
+    const name = String(leaveTypeName || '').toLowerCase()
+    isPaid = !(code === 'LOP' || code === 'UNPAID' || name.includes('unpaid') || name.includes('loss of pay'))
+  }
+
   return {
     id:
       raw?.id,
@@ -358,13 +419,15 @@ function mapEntry(
     projectName:
       raw?.projectName ??
       raw?.project_name ??
-      null,
+      (isLeave ? 'Leave' : null),
 
     taskCategory:
-      raw?.taskCategory ??
-      raw?.task_category ??
-      raw?.task_title ??
-      null,
+      isLeave
+        ? 'Leave'
+        : (raw?.taskCategory ??
+           raw?.task_category ??
+           raw?.task_title ??
+           null),
 
     description:
       raw?.description ??
@@ -377,9 +440,18 @@ function mapEntry(
       ),
 
     isBillable:
-      raw?.isBillable ??
-      raw?.is_billable ??
-      true,
+      isLeave
+        ? false
+        : (raw?.isBillable ??
+           raw?.is_billable ??
+           true),
+
+    isLeave,
+    leaveTypeId,
+    leaveTypeName,
+    leaveTypeCode,
+    leaveReason,
+    isPaid,
   }
 }
 
@@ -594,12 +666,19 @@ function mapTimesheet(
 }
 
 function getMissingDaySummary(
-  timesheet: AdminTimesheet
+  timesheet: AdminTimesheet,
+  holidayDates: Set<string> = new Set()
 ): MissingDaySummary {
-  const expectedWorkingDates =
+  const allWeekdays =
     getWeekdayDates(
       timesheet.year,
       timesheet.month
+    )
+
+  const expectedWorkingDates =
+    allWeekdays.filter(
+      date =>
+        !holidayDates.has(date)
     )
 
   const workedDates =
@@ -610,11 +689,12 @@ function getMissingDaySummary(
             (
               entry: TimesheetEntry
             ) =>
+              !entry.isLeave &&
+              entry.taskCategory !== 'Leave' &&
               Number(
                 entry.hours ||
                   0
-              ) >
-              0
+              ) > 0
           )
           .map(
             (
@@ -630,15 +710,96 @@ function getMissingDaySummary(
       ),
     ].sort()
 
-  const workedSet =
-    new Set(
-      workedDates
-    )
+  const leaveDates =
+    [
+      ...new Set(
+        timesheet.entries
+          .filter(
+            (
+              entry: TimesheetEntry
+            ) =>
+              entry.isLeave === true ||
+              entry.taskCategory === 'Leave' ||
+              String(entry.description || '').startsWith('[LEAVE|')
+          )
+          .map(
+            (
+              entry: TimesheetEntry
+            ) =>
+              normalizeDateOnly(
+                entry.entryDate ??
+                  entry.entry_date ??
+                  entry.work_date
+              )
+          )
+          .filter(Boolean)
+      ),
+    ].sort()
+
+  const paidLeaveDates =
+    [
+      ...new Set(
+        timesheet.entries
+          .filter(
+            (
+              entry: TimesheetEntry
+            ) =>
+              (entry.isLeave === true ||
+               entry.taskCategory === 'Leave' ||
+               String(entry.description || '').startsWith('[LEAVE|')) &&
+              entry.isPaid !== false
+          )
+          .map(
+            (
+              entry: TimesheetEntry
+            ) =>
+              normalizeDateOnly(
+                entry.entryDate ??
+                  entry.entry_date ??
+                  entry.work_date
+              )
+          )
+          .filter(Boolean)
+      ),
+    ].sort()
+
+  const unpaidLeaveDates =
+    [
+      ...new Set(
+        timesheet.entries
+          .filter(
+            (
+              entry: TimesheetEntry
+            ) =>
+              (entry.isLeave === true ||
+               entry.taskCategory === 'Leave' ||
+               String(entry.description || '').startsWith('[LEAVE|')) &&
+              entry.isPaid === false
+          )
+          .map(
+            (
+              entry: TimesheetEntry
+            ) =>
+              normalizeDateOnly(
+                entry.entryDate ??
+                  entry.entry_date ??
+                  entry.work_date
+              )
+          )
+          .filter(Boolean)
+      ),
+    ].sort()
+
+  const resolvedSet =
+    new Set([
+      ...workedDates,
+      ...leaveDates,
+    ])
 
   const pendingDates =
     expectedWorkingDates.filter(
       date =>
-        !workedSet.has(
+        !resolvedSet.has(
           date
         )
     )
@@ -646,6 +807,9 @@ function getMissingDaySummary(
   return {
     expectedWorkingDates,
     workedDates,
+    leaveDates,
+    paidLeaveDates,
+    unpaidLeaveDates,
     pendingDates,
   }
 }
@@ -797,6 +961,12 @@ export default function TimesheetApprovalsPage() {
   ] =
     useState(false)
 
+  const [
+    holidayDates,
+    setHolidayDates,
+  ] =
+    useState<Set<string>>(new Set())
+
   // ==========================================================
   // LOAD
   // ==========================================================
@@ -809,17 +979,43 @@ export default function TimesheetApprovalsPage() {
         )
 
         try {
-          const response =
-            await fetch(
-              `/api/timesheets?view=admin&year=${selectedYear}&month=${selectedMonth}`,
-              {
-                cache:
-                  'no-store',
+          const [response, holidayResponse] =
+            await Promise.all([
+              fetch(
+                `/api/timesheets?view=admin&year=${selectedYear}&month=${selectedMonth}`,
+                {
+                  cache:
+                    'no-store',
 
-                credentials:
-                  'include',
+                  credentials:
+                    'include',
+                }
+              ),
+              fetch(
+                `/api/holidays?year=${selectedYear}`,
+                {
+                  cache:
+                    'no-store',
+
+                  credentials:
+                    'include',
+                }
+              ),
+            ])
+
+          if (holidayResponse.ok) {
+            const holData = await holidayResponse.json()
+            if (holData.success && Array.isArray(holData.holidays)) {
+              const hSet = new Set<string>()
+              for (const h of holData.holidays) {
+                const d = normalizeDateOnly(h.date)
+                if (d) {
+                  hSet.add(d)
+                }
               }
-            )
+              setHolidayDates(hSet)
+            }
+          }
 
           const result =
             await response.json()
@@ -1220,75 +1416,37 @@ export default function TimesheetApprovalsPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={
-              selectedMonth
-            }
-            onChange={
-              event =>
-                setSelectedMonth(
-                  Number(
-                    event.target.value
-                  )
-                )
-            }
-            className="h-9 rounded-md border bg-background px-3 text-sm"
+          <Select
+            value={String(selectedMonth)}
+            onValueChange={(val) => setSelectedMonth(Number(val))}
           >
-            {MONTHS.map(
-              (
-                month,
-                index
-              ) => (
-                <option
-                  key={
-                    month
-                  }
-                  value={
-                    index +
-                    1
-                  }
-                >
+            <SelectTrigger className="h-9 w-[140px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {MONTHS.map((month, index) => (
+                <SelectItem key={month} value={String(index + 1)}>
                   {month}
-                </option>
-              )
-            )}
-          </select>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
-          <select
-            value={
-              selectedYear
-            }
-            onChange={
-              event =>
-                setSelectedYear(
-                  Number(
-                    event.target.value
-                  )
-                )
-            }
-            className="h-9 rounded-md border bg-background px-3 text-sm"
+          <Select
+            value={String(selectedYear)}
+            onValueChange={(val) => setSelectedYear(Number(val))}
           >
-            {[
-              selectedYear -
-                1,
-              selectedYear,
-              selectedYear +
-                1,
-            ].map(
-              year => (
-                <option
-                  key={
-                    year
-                  }
-                  value={
-                    year
-                  }
-                >
+            <SelectTrigger className="h-9 w-[100px] text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[selectedYear - 1, selectedYear, selectedYear + 1].map((year) => (
+                <SelectItem key={year} value={String(year)}>
                   {year}
-                </option>
-              )
-            )}
-          </select>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
 
           <Button
             variant="outline"
@@ -1316,7 +1474,7 @@ export default function TimesheetApprovalsPage() {
       {/* =====================================================
           SUMMARY
           ===================================================== */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2 sm:gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <SummaryCard
           label="Pending Admin Review"
           value={
@@ -1448,7 +1606,7 @@ export default function TimesheetApprovalsPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1080px] text-sm">
               <thead>
-                <tr className="border-b bg-muted/50 text-left text-xs text-muted-foreground">
+                <tr className="border-b bg-muted/30 text-left text-xs text-muted-foreground">
                   <th className="w-10 p-3"></th>
 
                   <th className="p-3 font-semibold">
@@ -1472,7 +1630,11 @@ export default function TimesheetApprovalsPage() {
                   </th>
 
                   <th className="p-3 text-center font-semibold">
-                    Pending Leave / Absence
+                    Leaves (Paid / LOP)
+                  </th>
+
+                  <th className="p-3 text-center font-semibold">
+                    Pending / Missing
                   </th>
 
                   <th className="p-3 text-center font-semibold">
@@ -1497,7 +1659,8 @@ export default function TimesheetApprovalsPage() {
 
                     const daySummary =
                       getMissingDaySummary(
-                        row
+                        row,
+                        holidayDates
                       )
 
                     const pendingReview =
@@ -1582,9 +1745,22 @@ export default function TimesheetApprovalsPage() {
                           </td>
 
                           <td className="p-3 text-center">
-                            {daySummary.workedDates.length}
+                            {daySummary.workedDates.length + daySummary.leaveDates.length}
                             {' / '}
                             {daySummary.expectedWorkingDates.length}
+                          </td>
+
+                          <td className="p-3 text-center">
+                            {daySummary.leaveDates.length > 0 ? (
+                              <div className="flex flex-col items-center">
+                                <span className="font-semibold">{daySummary.leaveDates.length}</span>
+                                <span className="text-[10px] text-muted-foreground">
+                                  ({daySummary.paidLeaveDates.length} paid, {daySummary.unpaidLeaveDates.length} LOP)
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
                           </td>
 
                           <td className="p-3 text-center">
@@ -1700,7 +1876,7 @@ export default function TimesheetApprovalsPage() {
                           <tr className="bg-muted/20">
                             <td
                               colSpan={
-                                9
+                                10
                               }
                               className="p-4"
                             >
@@ -1729,7 +1905,7 @@ export default function TimesheetApprovalsPage() {
                                   />
                                 </div>
 
-                                <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+                                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
                                   <MiniMetric
                                     label="Total Hours"
                                     value={row.totalHours.toFixed(
@@ -1752,22 +1928,49 @@ export default function TimesheetApprovalsPage() {
                                   />
 
                                   <MiniMetric
-                                    label="Expected Weekdays"
+                                    label="Paid Leave"
                                     value={String(
-                                      daySummary.expectedWorkingDates.length
+                                      daySummary.paidLeaveDates.length
                                     )}
                                   />
 
                                   <MiniMetric
-                                    label="Pending Leave / Absence"
+                                    label="Unpaid Leave (LOP)"
                                     value={String(
-                                      daySummary.pendingDates.length
+                                      daySummary.unpaidLeaveDates.length
                                     )}
                                     danger={
-                                      daySummary.pendingDates.length >
+                                      daySummary.unpaidLeaveDates.length >
                                       0
                                     }
                                   />
+
+                                  <MiniMetric
+                                    label="Working Days"
+                                    value={String(
+                                      daySummary.expectedWorkingDates.length
+                                    )}
+                                  />
+                                </div>
+
+                                <div className="rounded-lg border border-primary/20 bg-primary/5 p-3.5 text-xs">
+                                  <div className="font-semibold text-primary">
+                                    Monthly Payroll & Working-Day Impact
+                                  </div>
+                                  <p className="mt-1 leading-relaxed text-foreground">
+                                    Scheduled Working Days: <strong>{daySummary.expectedWorkingDates.length}</strong> | Worked: <strong>{daySummary.workedDates.length}</strong> | Paid Leave: <strong>{daySummary.paidLeaveDates.length}</strong> | Unpaid Leave / LOP: <strong>{daySummary.unpaidLeaveDates.length}</strong>
+                                  </p>
+                                  <p className="mt-1.5">
+                                    {daySummary.unpaidLeaveDates.length > 0 ? (
+                                      <span className="text-orange-700 dark:text-orange-400 font-medium">
+                                        ⚠️ {daySummary.unpaidLeaveDates.length} day(s) Loss of Pay (LOP) will be deducted during monthly payroll calculation (Daily Rate × {daySummary.unpaidLeaveDates.length}).
+                                      </span>
+                                    ) : (
+                                      <span className="text-emerald-700 dark:text-emerald-400 font-medium">
+                                        ✓ No salary deductions. All scheduled working days are covered by logged work or approved paid leave.
+                                      </span>
+                                    )}
+                                  </p>
                                 </div>
 
                                 {daySummary.pendingDates.length >
@@ -1821,7 +2024,7 @@ export default function TimesheetApprovalsPage() {
                                     <div className="overflow-x-auto rounded-lg border">
                                       <table className="w-full min-w-[760px] text-xs">
                                         <thead>
-                                          <tr className="border-b bg-muted/50 text-left">
+                                          <tr className="border-b bg-muted/30 text-left">
                                             <th className="p-2.5">
                                               Date
                                             </th>
@@ -1886,17 +2089,31 @@ export default function TimesheetApprovalsPage() {
 
                                                   <td className="p-2.5">
                                                     {entry.projectName ||
-                                                      'Not specified'}
+                                                      (entry.isLeave ? 'Leave' : 'Not specified')}
                                                   </td>
 
                                                   <td className="p-2.5">
-                                                    {entry.taskCategory ||
-                                                      'Not specified'}
+                                                    {entry.isLeave ? (
+                                                      <Badge
+                                                        variant="outline"
+                                                        className={
+                                                          entry.isPaid === false
+                                                            ? 'border-orange-300 bg-orange-50 text-orange-800'
+                                                            : 'border-blue-300 bg-blue-50 text-blue-800'
+                                                        }
+                                                      >
+                                                        Leave: {entry.leaveTypeName || 'Leave'} ({entry.isPaid === false ? 'Unpaid / LOP' : 'Paid'})
+                                                      </Badge>
+                                                    ) : (
+                                                      entry.taskCategory ||
+                                                        'Not specified'
+                                                    )}
                                                   </td>
 
                                                   <td className="p-2.5 text-muted-foreground">
-                                                    {entry.description ||
-                                                      '—'}
+                                                    {entry.isLeave
+                                                      ? (entry.leaveReason || entry.description || 'Leave recorded')
+                                                      : (entry.description || '—')}
                                                   </td>
 
                                                   <td className="p-2.5 text-right font-semibold">
@@ -1909,10 +2126,9 @@ export default function TimesheetApprovalsPage() {
                                                   </td>
 
                                                   <td className="p-2.5 text-center">
-                                                    {entry.isBillable !==
-                                                    false
-                                                      ? 'Yes'
-                                                      : 'No'}
+                                                    {entry.isLeave
+                                                      ? 'No'
+                                                      : (entry.isBillable !== false ? 'Yes' : 'No')}
                                                   </td>
                                                 </tr>
                                               )

@@ -537,6 +537,15 @@ export async function POST(
         'documents'
       )
       .update({
+        status:
+          'ACKNOWLEDGED',
+
+        acknowledged_at:
+          now,
+
+        acknowledged_by:
+          context.authUserId,
+
         description:
           JSON.stringify(
             acknowledgedMeta

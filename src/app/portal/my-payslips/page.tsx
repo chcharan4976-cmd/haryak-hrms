@@ -47,10 +47,10 @@ export default function MyPayslipsPage() {
   }, [user])
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b pb-4">
+    <div className="space-y-6 w-full max-w-5xl mx-auto">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">My Payslips & Tax Statements</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">My Payslips & Tax Statements</h1>
           <p className="text-xs text-muted-foreground mt-1">
             Access, inspect, and download your official monthly pay statements for {empName} ({empCode}).
           </p>
@@ -58,20 +58,20 @@ export default function MyPayslipsPage() {
       </div>
 
       {error && (
-        <div className="p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm text-red-700 dark:text-red-400">
+        <div className="p-3 sm:p-4 bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-900 rounded-lg flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-red-700 dark:text-red-400 break-words min-w-0">
             <AlertCircle className="w-4 h-4 shrink-0" />
-            <span>{error}</span>
+            <span className="break-words">{error}</span>
           </div>
-          <Button size="sm" variant="outline" onClick={fetchPayslips} className="h-7 text-xs">
+          <Button size="sm" variant="outline" onClick={fetchPayslips} className="h-7 text-xs shrink-0">
             <RefreshCw className="w-3 h-3 mr-1" /> Retry
           </Button>
         </div>
       )}
 
       {/* Statement Archive Table */}
-      <Card className="shadow-xs border">
-        <CardHeader className="pb-3 border-b bg-muted/20">
+      <Card className="shadow-xs border overflow-hidden">
+        <CardHeader className="p-3 sm:p-4 pb-3 border-b bg-muted/20">
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-base font-bold">Issued Pay Statements</CardTitle>
@@ -87,20 +87,20 @@ export default function MyPayslipsPage() {
               <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
             </div>
           ) : payslips.length === 0 ? (
-            <div className="p-12 text-center text-sm text-muted-foreground">
+            <div className="p-8 sm:p-12 text-center text-sm text-muted-foreground">
               No finalized payslips available.
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs text-left">
-                <thead className="bg-muted/50 border-b text-muted-foreground uppercase font-semibold text-[10px]">
+            <div className="relative w-full overflow-x-auto">
+              <table className="w-full min-w-[620px] text-xs text-left">
+                <thead className="bg-muted/30 border-b text-muted-foreground uppercase font-semibold text-[10px] tracking-wider">
                   <tr>
-                    <th className="px-4 py-3">Pay Period</th>
-                    <th className="px-4 py-3">Gross Salary</th>
-                    <th className="px-4 py-3">Deductions</th>
-                    <th className="px-4 py-3">Net Take Home</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
+                    <th className="px-3 sm:px-4 py-3">Pay Period</th>
+                    <th className="px-3 sm:px-4 py-3">Gross Salary</th>
+                    <th className="px-3 sm:px-4 py-3">Deductions</th>
+                    <th className="px-3 sm:px-4 py-3">Net Take Home</th>
+                    <th className="px-3 sm:px-4 py-3">Status</th>
+                    <th className="px-3 sm:px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">

@@ -15,10 +15,12 @@ export async function POST(request: Request) {
       )
     }
 
+    const cookiesToSet: { name: string; value: string; options?: any }[] = []
     const result = await authenticateUser(
       validation.data.identifier,
       validation.data.password,
-      validation.data.mode || 'ADMIN'
+      validation.data.mode || 'ADMIN',
+      (c) => cookiesToSet.push(...c)
     )
 
     if (!result.success || !result.user) {
@@ -28,13 +30,29 @@ export async function POST(request: Request) {
       )
     }
 
-    // Set secure session cookie and propagate all Supabase SSR cookies
+    // Set secure session cookie and propagate all Supabase SSR cookies with path: '/'
     const cookieStore = await cookies()
     const response = NextResponse.json(result)
 
-    // Ensure all Supabase SSR cookies set during authentication are propagated
+    // 1. Explicitly attach all Supabase SSR cookies produced during authentication
+    cookiesToSet.forEach(({ name, value, options }) => {
+      response.cookies.set(name, value, {
+        ...options,
+        path: '/',
+        sameSite: options?.sameSite || 'lax',
+        secure: process.env.NODE_ENV === 'production',
+      })
+    })
+
+    // 2. Ensure all other cookies in cookieStore are propagated with path: '/'
     for (const cookie of cookieStore.getAll()) {
-      response.cookies.set(cookie.name, cookie.value)
+      if (!response.cookies.has(cookie.name)) {
+        response.cookies.set(cookie.name, cookie.value, {
+          path: '/',
+          sameSite: 'lax',
+          secure: process.env.NODE_ENV === 'production',
+        })
+      }
     }
 
     const sessionData = JSON.stringify({
@@ -43,6 +61,8 @@ export async function POST(request: Request) {
       fullName: result.user.fullName,
       employeeCode: result.user.employeeCode,
       roles: result.user.roles,
+      mustChangeCredentials: Boolean(result.user.mustChangeCredentials),
+      mustChangePassword: Boolean(result.user.mustChangePassword),
     })
 
     const maxAge = validation.data.rememberMe 

@@ -25,7 +25,7 @@ export default function MyProfilePage() {
     setErrorState(null)
 
     const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 10000)
+    const timeoutId = setTimeout(() => controller.abort(), 25000)
 
     try {
       const res = await fetch('/api/portal/me', { signal: controller.signal })
@@ -74,17 +74,17 @@ export default function MyProfilePage() {
   }
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
+    <div className="space-y-6 w-full max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">My Official Profile</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">My Official Profile</h1>
           <p className="text-xs text-muted-foreground mt-1">
             Canonical company identity, official placement parameters, and statutory allocations.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 w-full sm:w-auto">
           {diagnostic && (
             <Button
               size="sm"
@@ -98,11 +98,11 @@ export default function MyProfilePage() {
 
           <Dialog open={requestOpen} onOpenChange={setRequestOpen}>
             <DialogTrigger asChild>
-              <Button size="sm" variant="outline" className="text-xs h-8">
+              <Button size="sm" variant="outline" className="text-xs h-8 w-full sm:w-auto">
                 Request Profile Correction
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-md">
+            <DialogContent className="max-w-md w-full">
               <DialogHeader>
                 <DialogTitle className="text-base font-bold">Request Profile Information Update</DialogTitle>
                 <DialogDescription className="text-xs">
@@ -117,7 +117,7 @@ export default function MyProfilePage() {
                 </p>
               </div>
               <div className="py-2 flex justify-end">
-                <Button size="sm" onClick={() => setRequestOpen(false)} className="bg-[#1e2a78] text-white">
+                <Button size="sm" onClick={() => setRequestOpen(false)} className="w-full sm:w-auto bg-[#1e2a78] text-white">
                   Understood
                 </Button>
               </div>
@@ -128,7 +128,7 @@ export default function MyProfilePage() {
 
       {/* Internal Development Diagnostic Panel */}
       {showDiagnostic && diagnostic && (
-        <div className="p-4 rounded-xl border border-blue-300 bg-blue-50 dark:bg-blue-950/40 text-xs space-y-1.5 font-mono">
+        <div className="p-4 rounded-xl border border-blue-300 bg-blue-50 dark:bg-blue-950/40 text-xs space-y-1.5 font-mono overflow-x-auto">
           <div className="flex items-center justify-between pb-1 border-b border-blue-200">
             <span className="font-bold text-blue-900 dark:text-blue-300">Identity Resolution Diagnostics (Dev Verification)</span>
             <Badge variant="outline" className="text-[10px]">CANONICAL_MATCH</Badge>
@@ -151,20 +151,20 @@ export default function MyProfilePage() {
       {/* State 2: Resolution Error — distinct from real NULLs */}
       {!loading && errorState && (
         <Card className="border-destructive/40 bg-destructive/5 shadow-xs">
-          <CardContent className="p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <CardContent className="p-4 sm:p-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div className="flex items-start gap-3">
               <div className="p-2 bg-destructive/10 text-destructive rounded-lg shrink-0 mt-0.5">
                 <UserX className="w-5 h-5" />
               </div>
-              <div className="space-y-1">
+              <div className="space-y-1 min-w-0">
                 <h3 className="text-sm font-bold text-destructive">Employee Profile Linkage Error</h3>
-                <p className="text-xs text-muted-foreground">{errorState.message}</p>
+                <p className="text-xs text-muted-foreground break-words">{errorState.message}</p>
                 <p className="text-[11px] text-muted-foreground">
                   Your authenticated user account does not have a confirmed link to an active employee record. Please contact HR Administration.
                 </p>
               </div>
             </div>
-            <Button size="sm" variant="outline" onClick={fetchProfile} className="text-xs shrink-0">
+            <Button size="sm" variant="outline" onClick={fetchProfile} className="text-xs shrink-0 w-full sm:w-auto">
               <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Retry Linkage
             </Button>
           </CardContent>
@@ -176,15 +176,15 @@ export default function MyProfilePage() {
         <div className="grid gap-6 md:grid-cols-3">
           {/* Left Column — Summary Card */}
           <Card className="md:col-span-1 border shadow-xs">
-            <CardContent className="p-6 flex flex-col items-center text-center space-y-3">
+            <CardContent className="p-4 sm:p-6 flex flex-col items-center text-center space-y-3">
               <div className="w-20 h-20 rounded-2xl bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-300 flex items-center justify-center text-2xl font-bold border">
                 {profile.firstName?.[0]}{profile.lastName?.[0] || ''}
               </div>
 
-              <div>
-                <h2 className="text-base font-bold text-foreground">{profile.fullName}</h2>
+              <div className="min-w-0">
+                <h2 className="text-base font-bold text-foreground truncate">{profile.fullName}</h2>
                 <p className="font-mono font-bold text-xs text-blue-700 dark:text-blue-400 mt-0.5">{profile.employeeCode}</p>
-                <p className="text-xs text-muted-foreground mt-1">{profile.designation || 'Staff Member'}</p>
+                <p className="text-xs text-muted-foreground mt-1 truncate">{profile.designation || 'Staff Member'}</p>
               </div>
 
               <Badge className={`text-[10px] uppercase font-semibold ${
@@ -202,7 +202,7 @@ export default function MyProfilePage() {
                 </div>
                 <div className="flex items-center gap-2.5 text-muted-foreground">
                   <Phone className="w-3.5 h-3.5 shrink-0" />
-                  <span>{renderField(profile.phone)}</span>
+                  <span className="truncate">{renderField(profile.phone)}</span>
                 </div>
                 <div className="flex items-center gap-2.5 text-muted-foreground">
                   <Building className="w-3.5 h-3.5 shrink-0" />
@@ -220,11 +220,11 @@ export default function MyProfilePage() {
           <div className="md:col-span-2 space-y-4">
             {/* Employment Parameters */}
             <Card className="border shadow-xs">
-              <CardHeader className="pb-3 border-b bg-muted/20">
+              <CardHeader className="p-4 sm:p-5 pb-3 border-b bg-muted/20">
                 <CardTitle className="text-sm font-bold">Employment & Placement Parameters</CardTitle>
               </CardHeader>
-              <CardContent className="p-5 space-y-3 text-xs">
-                <div className="grid grid-cols-2 gap-4">
+              <CardContent className="p-4 sm:p-5 space-y-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                   <div className="border-b pb-2">
                     <span className="text-muted-foreground block text-[11px]">Assigned Employee ID</span>
                     <span className="font-mono font-bold text-blue-700 dark:text-blue-400">{profile.employeeCode}</span>
@@ -263,13 +263,13 @@ export default function MyProfilePage() {
 
             {/* Bank Accounts */}
             <Card className="border shadow-xs">
-              <CardHeader className="pb-3 border-b bg-muted/20">
+              <CardHeader className="p-4 sm:p-5 pb-3 border-b bg-muted/20">
                 <CardTitle className="text-sm font-bold">Disbursement Bank Accounts</CardTitle>
               </CardHeader>
-              <CardContent className="p-5 space-y-3 text-xs">
+              <CardContent className="p-4 sm:p-5 space-y-3 text-xs">
                 {profile.bankAccounts && profile.bankAccounts.length > 0 ? (
                   profile.bankAccounts.map((b, idx) => (
-                    <div key={b.id || idx} className="grid grid-cols-3 gap-4 border-b last:border-0 pb-2.5 last:pb-0">
+                    <div key={b.id || idx} className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 border-b last:border-0 pb-2.5 last:pb-0">
                       <div>
                         <span className="text-muted-foreground block text-[11px]">Bank Name</span>
                         {renderField(b.bankName)}
@@ -294,11 +294,11 @@ export default function MyProfilePage() {
 
             {/* Statutory Details */}
             <Card className="border shadow-xs">
-              <CardHeader className="pb-3 border-b bg-muted/20">
+              <CardHeader className="p-4 sm:p-5 pb-3 border-b bg-muted/20">
                 <CardTitle className="text-sm font-bold">Statutory & Tax Allocations</CardTitle>
               </CardHeader>
-              <CardContent className="p-5 space-y-3 text-xs">
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <CardContent className="p-4 sm:p-5 space-y-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 sm:gap-4">
                   <div className="border-b pb-2">
                     <span className="text-muted-foreground block text-[11px]">PAN (Masked)</span>
                     {renderField(profile.statutoryDetails?.panMasked)}

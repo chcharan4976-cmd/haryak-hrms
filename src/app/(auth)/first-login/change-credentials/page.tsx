@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useRouter } from 'next/navigation'
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card'
 import { adminFirstLoginSchema, type AdminFirstLoginInput } from '@/lib/validations/auth'
+import { useAuth } from '@/components/providers/auth-provider'
 import Image from 'next/image'
 
 export default function AdminFirstLoginPage() {
@@ -18,7 +19,29 @@ export default function AdminFirstLoginPage() {
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
+  const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [isSessionExpired, setIsSessionExpired] = useState(false)
+  const [isEmployeeAccount, setIsEmployeeAccount] = useState(false)
   const router = useRouter()
+  const { user, loading } = useAuth()
+
+  useEffect(() => {
+    if (!loading && user) {
+      const roles: string[] = (user as any)?.roles || (user as any)?.user_metadata?.roles || []
+      const userRole = (user as any)?.role || (user as any)?.user_metadata?.role
+      const hasAdminRole = 
+        roles.some((r: string) => ['SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN', 'ADMINISTRATION'].includes(r)) ||
+        ['SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN', 'ADMINISTRATION'].includes(userRole)
+      const hasEmployeeRole = roles.includes('EMPLOYEE') || userRole === 'EMPLOYEE'
+      const hasEmployeeProfile = Boolean((user as any)?.employeeCode || (user as any)?.user_metadata?.employee_id)
+
+      // An employee account should never be on the administrator bootstrap setup page
+      if ((hasEmployeeRole || hasEmployeeProfile) && !hasAdminRole) {
+        toast.info('Directing to Employee Password Setup...')
+        router.replace('/first-login/change-password')
+      }
+    }
+  }, [user, loading, router])
 
   const { register, handleSubmit, formState: { errors } } = useForm<AdminFirstLoginInput>({
     resolver: zodResolver(adminFirstLoginSchema),
@@ -26,6 +49,9 @@ export default function AdminFirstLoginPage() {
 
   const onSubmit = async (data: AdminFirstLoginInput) => {
     setIsLoading(true)
+    setErrorMessage(null)
+    setIsSessionExpired(false)
+    setIsEmployeeAccount(false)
     try {
       const response = await fetch('/api/auth/first-login/admin', {
         method: 'POST',
@@ -36,7 +62,27 @@ export default function AdminFirstLoginPage() {
       const result = await response.json()
 
       if (!response.ok || !result.success) {
-        toast.error(result.error || 'Failed to update administrator credentials.')
+        const errorText = result.error || 'Failed to update administrator credentials.'
+        setErrorMessage(errorText)
+        if (
+          errorText.toLowerCase().includes('session has expired') ||
+          errorText.toLowerCase().includes('session not found')
+        ) {
+          setIsSessionExpired(true)
+        }
+        if (
+          errorText.toLowerCase().includes('administrator privileges are required') ||
+          errorText.toLowerCase().includes('only for system administrators')
+        ) {
+          setIsEmployeeAccount(true)
+          toast.error('This setup is for system administrators only. Redirecting to employee password setup...')
+          setTimeout(() => {
+            router.push('/first-login/change-password')
+          }, 1500)
+          setIsLoading(false)
+          return
+        }
+        toast.error(errorText)
         setIsLoading(false)
         return
       }
@@ -46,16 +92,18 @@ export default function AdminFirstLoginPage() {
       router.refresh()
     } catch (error) {
       console.error('Error updating admin credentials:', error)
-      toast.error('An unexpected error occurred. Please try again.')
+      const errText = 'An unexpected error occurred. Please try again.'
+      setErrorMessage(errText)
+      toast.error(errText)
     } finally {
       setIsLoading(false)
     }
   }
 
   return (
-    <div className="min-h-screen w-full flex items-center justify-center p-4 sm:p-6 lg:p-8 bg-muted/40">
+    <div className="min-h-screen min-h-[100dvh] w-full flex items-center justify-center p-3 sm:p-6 lg:p-8 bg-muted/40">
       <Card className="w-full max-w-xl shadow-lg border">
-        <CardHeader className="text-center space-y-3 pb-6 border-b">
+        <CardHeader className="text-center space-y-3 p-4 sm:p-6 pb-6 border-b">
           <div className="mx-auto bg-white p-2 rounded-xl border shadow-sm w-fit">
             <Image
               src="/logo.jpg"
@@ -70,10 +118,10 @@ export default function AdminFirstLoginPage() {
             <span className="text-xs font-semibold uppercase tracking-wider text-blue-800 dark:text-blue-400 block mb-1">
               Initial System Security Setup
             </span>
-            <CardTitle className="text-2xl font-bold text-foreground">
+            <CardTitle className="text-xl sm:text-2xl font-bold text-foreground">
               Secure Your Admin Account
             </CardTitle>
-            <CardDescription className="text-sm mt-1 max-w-md mx-auto">
+            <CardDescription className="text-xs sm:text-sm mt-1 max-w-md mx-auto">
               You are logging in with temporary bootstrap credentials. For company security compliance, you must update both your administrator email and master password before proceeding.
             </CardDescription>
           </div>
@@ -81,16 +129,52 @@ export default function AdminFirstLoginPage() {
 
         <form onSubmit={handleSubmit(onSubmit)}>
           <CardContent className="space-y-5 pt-6">
-            {/* Security Notice */}
-            <div>
-  <p className="font-medium text-amber-800 dark:text-amber-300">
-    Security Notice
-  </p>
+            {/* Error Notification Banner */}
+            {errorMessage && (
+              <div className="p-3.5 rounded-lg border border-destructive/30 bg-destructive/10 text-destructive text-xs sm:text-sm flex flex-col gap-2">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+                  <span className="font-medium leading-relaxed">{errorMessage}</span>
+                </div>
+                {isSessionExpired && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push('/login')}
+                    className="w-fit text-xs mt-1 border-destructive/40 hover:bg-destructive/10"
+                  >
+                    Sign in with temporary credentials
+                  </Button>
+                )}
+                {isEmployeeAccount && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => router.push('/first-login/change-password')}
+                    className="w-fit text-xs mt-1 border-primary/40 hover:bg-primary/10 text-primary"
+                  >
+                    Go to Employee Password Setup
+                  </Button>
+                )}
+              </div>
+            )}
 
-  <p className="mt-0.5 text-amber-700 dark:text-amber-400">
-    Your temporary bootstrap password will be permanently deactivated upon successful submission.
-  </p>
-</div> 
+            {/* Security Notice */}
+            <div className="p-3 rounded-lg border border-amber-500/20 bg-amber-500/10 text-xs">
+              <div className="flex items-start gap-2">
+                <ShieldAlert className="h-4 w-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold text-amber-900 dark:text-amber-300">
+                    Security Compliance Requirement
+                  </p>
+                  <p className="mt-0.5 text-amber-800 dark:text-amber-400 text-[11px] leading-relaxed">
+                    Your temporary bootstrap credentials will be permanently deactivated upon successful submission. All future administrative access will require your updated official email and new password.
+                  </p>
+                </div>
+              </div>
+            </div> 
 
             {/* Current Password */}
             <div className="space-y-1.5">

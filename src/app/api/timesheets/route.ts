@@ -90,7 +90,9 @@ export async function POST(request: NextRequest) {
     const currentYear = year || new Date().getFullYear()
     const currentMonth = month || new Date().getMonth() + 1
 
-    if (action === 'submit') {
+    const normalizedAction = String(action || 'draft').trim().toLowerCase()
+
+    if (normalizedAction === 'submit') {
       // First save draft if entries provided
       if (Array.isArray(entries) && entries.length > 0) {
         await saveTimesheetDraft(context.companyId, targetEmployeeId, currentYear, currentMonth, entries, userContext)

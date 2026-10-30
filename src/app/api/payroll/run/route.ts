@@ -807,25 +807,9 @@ function resolveApprovedLeaveDays(
           clippedEnd
         )
     ) {
-      if (
-        kind ===
-        'PAID'
-      ) {
-        paidLeaveDates.add(
-          date
-        )
-      } else if (
-        kind ===
-        'UNPAID'
-      ) {
-        unpaidLeaveDates.add(
-          date
-        )
-      } else {
-        unknownApprovedLeaveDates.add(
-          date
-        )
-      }
+      // Under the monthly deduction followed by annual compensation model,
+      // all employee-requested leaves on working days are initially deducted in the monthly payroll.
+      unpaidLeaveDates.add(date)
     }
   }
 
@@ -909,6 +893,29 @@ function hasPositiveTimesheetHours(
   )
 }
 
+function isTimesheetLeaveEntry(entry: any): boolean {
+  if (entry.is_leave === true || entry.isLeave === true) return true
+  if (entry.task_category === 'Leave' || entry.taskCategory === 'Leave') return true
+  const desc = String(entry.description || '').trim()
+  if (desc.startsWith('[LEAVE|')) return true
+  return false
+}
+
+function isTimesheetPaidLeave(entry: any, leaveTypesById?: Map<string, any>): boolean {
+  /**
+   * Haryak One Mandatory Company Payroll Policy:
+   * "The company provides employees with 11 annual paid-leave compensation days per calendar year.
+   * However, these are NOT immediately paid leave days.
+   * Every employee-requested leave day on a normal scheduled working day must initially be deducted from that month's salary.
+   * The company will subsequently compensate eligible leave deductions at the end of the calendar year after completing the annual leave audit.
+   * This is a monthly deduction followed by annual compensation model.
+   * Do not implement the conventional first-11-days-as-paid-leave model."
+   *
+   * Note: Company Calendar public holidays are completely separate, non-working, and never deducted.
+   */
+  return false
+}
+
 function reconcileTimesheetDates(
   params: {
     workingDates:
@@ -928,6 +935,9 @@ function reconcileTimesheetDates(
 
     lastWorkingDate?:
       string | null
+
+    leaveTypesById?:
+      Map<string, any>
   }
 ): TimesheetReconciliationResult {
   const {
@@ -937,34 +947,11 @@ function reconcileTimesheetDates(
     unpaidLeaveDates,
     joiningDate,
     lastWorkingDate,
+    leaveTypesById,
   } = params
 
   const workedSet =
     new Set<string>()
-
-  for (
-    const entry of
-      timesheetEntries || []
-  ) {
-    if (
-      !hasPositiveTimesheetHours(
-        entry
-      )
-    ) {
-      continue
-    }
-
-    const date =
-      getTimesheetEntryDate(
-        entry
-      )
-
-    if (date) {
-      workedSet.add(
-        date
-      )
-    }
-  }
 
   const paidLeaveSet =
     new Set<string>(
@@ -975,6 +962,30 @@ function reconcileTimesheetDates(
     new Set<string>(
       unpaidLeaveDates
     )
+
+  for (
+    const entry of
+      timesheetEntries || []
+  ) {
+    const date =
+      getTimesheetEntryDate(
+        entry
+      )
+
+    if (!date) {
+      continue
+    }
+
+    if (isTimesheetLeaveEntry(entry)) {
+      if (isTimesheetPaidLeave(entry, leaveTypesById)) {
+        paidLeaveSet.add(date)
+      } else {
+        unpaidLeaveSet.add(date)
+      }
+    } else if (hasPositiveTimesheetHours(entry)) {
+      workedSet.add(date)
+    }
+  }
 
   const unresolvedSet =
     new Set<string>()
@@ -2646,6 +2657,341 @@ export async function POST(
     }
 
     // ========================================================
+    // APPROVED HISTORICAL PAYROLL / YTD
+    // ========================================================
+
+    /**
+     * YTD is calculated from finalized historical payroll only.
+     *
+     * For this India payroll implementation the payroll year is the
+     * financial year (1 April through 31 March). The current payroll
+     * period is NOT included here; calculatePayroll() receives only
+     * historical totals and adds the current period deterministically.
+     *
+     * Draft, calculating, review, error, rejected, or otherwise
+     * non-final payroll runs are deliberately excluded.
+     */
+    const periodEndParts =
+      parseDateOnly(
+        periodEnd
+      )
+
+    const financialYearStart =
+      periodEndParts.month >= 4
+        ? `${periodEndParts.year}-04-01`
+        : `${periodEndParts.year - 1}-04-01`
+
+    const historicalYtdByEmployee =
+      new Map<
+        string,
+        {
+          gross: number
+          pf: number
+          professionalTax: number
+          incomeTax: number
+          net: number
+        }
+      >()
+
+    const {
+      data: priorPeriods,
+      error: priorPeriodError,
+    } = await admin
+      .from(
+        'payroll_periods'
+      )
+      .select(
+        'id, start_date, end_date'
+      )
+      .eq(
+        'company_id',
+        companyId
+      )
+      .gte(
+        'end_date',
+        financialYearStart
+      )
+      .lt(
+        'end_date',
+        periodStart
+      )
+
+    if (priorPeriodError) {
+      await admin
+        .from(
+          'payroll_runs'
+        )
+        .update({
+          status: 'error',
+        })
+        .eq(
+          'id',
+          run.id
+        )
+
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            `Historical payroll periods could not be loaded for YTD calculation: ${priorPeriodError.message}`,
+        },
+        {
+          status: 500,
+        }
+      )
+    }
+
+    const priorPeriodIds =
+      (priorPeriods || [])
+        .map(
+          (item: any) =>
+            item.id
+        )
+        .filter(Boolean)
+
+    if (
+      priorPeriodIds.length > 0 &&
+      processingEmployeeIds.length > 0
+    ) {
+      const {
+        data: finalizedRuns,
+        error: finalizedRunError,
+      } = await admin
+        .from(
+          'payroll_runs'
+        )
+        .select(
+          'id, payroll_period_id, status'
+        )
+        .eq(
+          'company_id',
+          companyId
+        )
+        .in(
+          'payroll_period_id',
+          priorPeriodIds
+        )
+        .in(
+          'status',
+          [
+            'approved',
+            'locked',
+          ]
+        )
+
+      if (finalizedRunError) {
+        await admin
+          .from(
+            'payroll_runs'
+          )
+          .update({
+            status: 'error',
+          })
+          .eq(
+            'id',
+            run.id
+          )
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Finalized historical payroll runs could not be loaded for YTD calculation: ${finalizedRunError.message}`,
+          },
+          {
+            status: 500,
+          }
+        )
+      }
+
+      const finalizedRunIds =
+        (finalizedRuns || [])
+          .map(
+            (item: any) =>
+              item.id
+          )
+          .filter(Boolean)
+
+      if (finalizedRunIds.length > 0) {
+        const {
+          data: historicalRecords,
+          error: historicalRecordError,
+        } = await admin
+          .from(
+            'payroll_employee_records'
+          )
+          .select(`
+            id,
+            employee_id,
+            gross_earnings,
+            net_salary,
+            payroll_deductions(
+              component_name,
+              component_code,
+              amount
+            )
+          `)
+          .in(
+            'payroll_run_id',
+            finalizedRunIds
+          )
+          .in(
+            'employee_id',
+            processingEmployeeIds
+          )
+
+        if (historicalRecordError) {
+          await admin
+            .from(
+              'payroll_runs'
+            )
+            .update({
+              status: 'error',
+            })
+            .eq(
+              'id',
+              run.id
+            )
+
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                `Historical payroll records could not be loaded for YTD calculation: ${historicalRecordError.message}`,
+            },
+            {
+              status: 500,
+            }
+          )
+        }
+
+        for (
+          const historicalRecord of
+            historicalRecords || []
+        ) {
+          const employeeId =
+            historicalRecord.employee_id
+
+          if (!employeeId) {
+            continue
+          }
+
+          const totals =
+            historicalYtdByEmployee.get(
+              employeeId
+            ) || {
+              gross: 0,
+              pf: 0,
+              professionalTax: 0,
+              incomeTax: 0,
+              net: 0,
+            }
+
+          totals.gross +=
+            Number(
+              historicalRecord.gross_earnings ||
+                0
+            )
+
+          totals.net +=
+            Number(
+              historicalRecord.net_salary ||
+                0
+            )
+
+          for (
+            const deduction of
+              historicalRecord.payroll_deductions || []
+          ) {
+            const code =
+              String(
+                deduction.component_code ||
+                  ''
+              )
+                .trim()
+                .toUpperCase()
+
+            const name =
+              String(
+                deduction.component_name ||
+                  ''
+              )
+                .trim()
+                .toLowerCase()
+
+            const amount =
+              Number(
+                deduction.amount ||
+                  0
+              )
+
+            if (
+              code === 'PF' ||
+              code === 'EPF' ||
+              name.includes(
+                'provident'
+              ) ||
+              name === 'pf'
+            ) {
+              totals.pf += amount
+              continue
+            }
+
+            if (
+              code === 'PT' ||
+              code === 'PROFESSIONAL_TAX' ||
+              name.includes(
+                'professional tax'
+              )
+            ) {
+              totals.professionalTax +=
+                amount
+              continue
+            }
+
+            if (
+              code === 'TDS' ||
+              code === 'INCOME_TAX' ||
+              name.includes(
+                'income tax'
+              ) ||
+              name === 'tds'
+            ) {
+              totals.incomeTax +=
+                amount
+            }
+          }
+
+          historicalYtdByEmployee.set(
+            employeeId,
+            totals
+          )
+        }
+      }
+    }
+
+    // ========================================================
+    // APPROVED ANNUAL LEAVE COMPENSATION ADJUSTMENTS
+    // ========================================================
+    const compAdjustmentsByEmployee = new Map<string, any>()
+    const { data: compAdjustments } = await admin
+      .from('payroll_adjustments')
+      .select('*')
+      .eq('company_id', companyId)
+      .eq('adjustment_type', 'ANNUAL_LEAVE_COMPENSATION')
+      .in('status', ['approved', 'pending'])
+
+    if (compAdjustments) {
+      for (const adj of compAdjustments) {
+        if (adj.employee_id && !compAdjustmentsByEmployee.has(adj.employee_id)) {
+          compAdjustmentsByEmployee.set(adj.employee_id, adj)
+        }
+      }
+    }
+
+    const appliedAdjustmentIds: string[] = []
+
+    // ========================================================
     // AGGREGATION
     // ========================================================
 
@@ -2944,6 +3290,8 @@ export async function POST(
 
           lastWorkingDate:
             employee.last_working_date,
+
+          leaveTypesById,
         })
 
       /**
@@ -3054,6 +3402,19 @@ export async function POST(
       // 6. PAID DAYS / LOP
       // ======================================================
 
+      const combinedLopDates = new Set<string>([
+        ...dayResolution.attendanceLopDates,
+        ...dayResolution.unpaidLeaveDates,
+        ...reconciliation.unpaidLeaveDates,
+      ])
+
+      const finalLopDatesList = [...combinedLopDates].filter(d => {
+        if (holidayDates.includes(d)) return false
+        const dow = getDayOfWeek(d)
+        if (weeklyOffs.includes(dow)) return false
+        return true
+      })
+
       const paidDaysResult =
         calculatePaidDays({
           periodStartDate:
@@ -3069,7 +3430,7 @@ export async function POST(
             employee.last_working_date,
 
           lopDays:
-            dayResolution.lopDays,
+            finalLopDatesList.length,
 
           holidays:
             holidayDates,
@@ -3135,23 +3496,34 @@ export async function POST(
           finalLopDays,
 
         /**
-         * TODO:
-         * Replace with approved historical payroll aggregation.
+         * Historical finalized payroll totals for the current
+         * financial year. calculatePayroll() adds the current
+         * period to these values where YTD outputs are produced.
          */
         ytdGrossEarnings:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.gross || 0,
 
         ytdPfContribution:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.pf || 0,
 
         ytdProfessionalTax:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.professionalTax || 0,
 
         ytdIncomeTax:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.incomeTax || 0,
 
         ytdNetPay:
-          0,
+          historicalYtdByEmployee.get(
+            employee.id
+          )?.net || 0,
 
         pfApplicable:
           statutory
@@ -3254,6 +3626,34 @@ export async function POST(
           message:
             'Calculated net salary cannot be negative.',
         })
+      }
+
+      // Include approved Annual Leave Compensation Settlement if present
+      const compAdj = compAdjustmentsByEmployee.get(employee.id)
+      if (compAdj && Number(compAdj.amount || 0) > 0) {
+        const compAmount = Math.round(Number(compAdj.amount) * 100) / 100
+        appliedAdjustmentIds.push(compAdj.id)
+
+        result.earnings.push({
+          componentName: 'Annual Paid-Leave Compensation Settlement',
+          componentCode: 'ANNUAL_LEAVE_COMPENSATION',
+          monthlyEntitlement: compAmount,
+          paidDayFactor: 1.0,
+          adjustment: 0,
+          finalAmount: compAmount,
+          isTaxable: true,
+          sortOrder: 99,
+          calculationBreakdown: {
+            description: `Annual Paid-Leave Compensation Settlement for ${compAdj.metadata?.calendarYear || period.period_year}`,
+            steps: [
+              `Approved days: ${compAdj.metadata?.approvedDays ?? 'N/A'}`,
+              `Settlement adjustment ID: ${compAdj.id}`,
+            ],
+          },
+        })
+
+        result.grossEarnings = Math.round((result.grossEarnings + compAmount) * 100) / 100
+        result.netSalary = Math.round((result.netSalary + compAmount) * 100) / 100
       }
 
       // ======================================================
@@ -3687,6 +4087,21 @@ export async function POST(
           }
         )
       }
+    }
+
+    // ========================================================
+    // UPDATE APPLIED COMPENSATION ADJUSTMENTS
+    // ========================================================
+    if (appliedAdjustmentIds.length > 0) {
+      await admin
+        .from('payroll_adjustments')
+        .update({
+          status: 'applied',
+          payroll_run_id: run.id,
+          payroll_period_id: period.id,
+          updated_at: new Date().toISOString(),
+        })
+        .in('id', appliedAdjustmentIds)
     }
 
     // ========================================================

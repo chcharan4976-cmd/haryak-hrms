@@ -107,11 +107,11 @@ export default function HelpPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 w-full max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b pb-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 sm:gap-4 border-b pb-4">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">HR Help Desk & Requests</h1>
+          <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">HR Help Desk & Requests</h1>
           <p className="text-xs text-muted-foreground mt-1">
             Submit inquiries, request profile/bank changes, or ask questions to the HR team.
           </p>
@@ -119,11 +119,11 @@ export default function HelpPage() {
         
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="bg-[#1e2a78] hover:bg-[#152060] text-white text-xs shadow-sm">
+            <Button className="h-9 w-full sm:w-auto bg-[#1e2a78] hover:bg-[#152060] text-white text-xs shadow-sm">
               <Plus className="w-4 h-4 mr-1.5" /> Raise HR Request
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-md w-full">
             <DialogHeader>
               <DialogTitle className="text-base font-bold">Raise New HR Request</DialogTitle>
               <DialogDescription className="text-xs">
@@ -135,7 +135,7 @@ export default function HelpPage() {
               <div className="space-y-1">
                 <Label htmlFor="reqCategory">Request Category</Label>
                 <Select value={category} onValueChange={setCategory}>
-                  <SelectTrigger id="reqCategory" className="text-xs">
+                  <SelectTrigger id="reqCategory" className="text-xs h-9">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -157,7 +157,7 @@ export default function HelpPage() {
                   placeholder="Brief summary of your request"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  className="text-xs"
+                  className="text-xs h-9"
                 />
               </div>
 
@@ -173,12 +173,13 @@ export default function HelpPage() {
                 />
               </div>
 
-              <DialogFooter className="pt-2">
-                <Button type="button" variant="outline" size="sm" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>
+              <DialogFooter className="flex-col-reverse sm:flex-row gap-2 sm:gap-0 pt-2">
+                <Button type="button" variant="outline" size="sm" className="w-full sm:w-auto" onClick={() => setIsDialogOpen(false)} disabled={isSubmitting}>
                   Cancel
                 </Button>
-                <Button type="submit" size="sm" className="bg-[#1e2a78] hover:bg-[#152060] text-white" disabled={isSubmitting}>
-                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Submit Request'}
+                <Button type="submit" size="sm" className="w-full sm:w-auto bg-[#1e2a78] hover:bg-[#152060] text-white" disabled={isSubmitting}>
+                  {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                  Submit Request
                 </Button>
               </DialogFooter>
             </form>
@@ -195,7 +196,7 @@ export default function HelpPage() {
         <CardContent className="p-0 divide-y divide-border">
           {loading ? (
             <div className="flex justify-center items-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+              <Loader2 className="w-8 h-8 animate-spin text-[#1e2a78]" />
             </div>
           ) : requests.length === 0 ? (
             <div className="p-12 text-center text-sm text-muted-foreground">

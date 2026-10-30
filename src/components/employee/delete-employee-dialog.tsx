@@ -551,9 +551,10 @@ export function DeleteEmployeeDialog({
           )}
         </div>
 
-        <DialogFooter className="gap-2 border-t pt-4 sm:gap-0">
+        <DialogFooter className="flex-col-reverse sm:flex-row gap-2 border-t pt-4 sm:gap-2">
           <Button
             variant="outline"
+            className="w-full sm:w-auto"
             onClick={() => onOpenChange(false)}
             disabled={submitting}
           >
@@ -566,7 +567,7 @@ export function DeleteEmployeeDialog({
               disabled={
                 submitting || !reason.trim()
               }
-              className="bg-amber-600 text-white hover:bg-amber-700"
+              className="w-full sm:w-auto bg-amber-600 text-white hover:bg-amber-700"
             >
               {submitting ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -588,6 +589,7 @@ export function DeleteEmployeeDialog({
                 !reason.trim()
               }
               variant="destructive"
+              className="w-full sm:w-auto"
             >
               {submitting ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />

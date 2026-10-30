@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin'
+import { searchCompanyDirectory } from '@/lib/services/employee-directory-service'
 
 export interface SafeDirectoryCard {
   id: string
@@ -17,6 +18,11 @@ export interface ChatParticipant {
   role?: string
 }
 
+export type ChatReceiptStatus =
+  | 'sent'
+  | 'delivered'
+  | 'read'
+
 export interface ChatMessage {
   id: string
   conversationId: string
@@ -24,388 +30,2081 @@ export interface ChatMessage {
   senderEmployeeId?: string
   senderName: string
   content: string
-  attachments?: { name: string; url: string; size?: number; type?: string }[]
+
+  attachments?: {
+    name: string
+    url: string
+    size?: number
+    type?: string
+  }[]
+
   isAiMessage?: boolean
+
+  receiptStatus?: ChatReceiptStatus
+  deliveredAt?: string | null
+  readAt?: string | null
+
   createdAt: string
+  expiresAt?: string
 }
 
 export interface ChatConversation {
   id: string
   companyId: string
-  type: 'direct' | 'group' | 'channel'
+
+  type:
+    | 'direct'
+    | 'group'
+    | 'channel'
+
   title: string
+
   departmentId?: string | null
+
   participants: ChatParticipant[]
+
   lastMessage?: {
     content: string
     senderName: string
     createdAt: string
   } | null
+
+  unreadCount?: number
+
   createdAt: string
   updatedAt: string
 }
 
-import { searchCompanyDirectory } from '@/lib/services/employee-directory-service'
+interface ChatActor {
+  userId: string
+  employeeId?: string
+  name: string
+}
 
-/**
- * Perform safe directory search for employee cards.
- * Searches employees by employee_code, full_name, and official_email.
- * STRICT SECURITY INVARIANT: NEVER returns salary, ctc, bank details, PAN, UAN, or personal address.
- */
+function parseJson<T>(
+  value: unknown
+): T | null {
+  try {
+    if (typeof value === 'string') {
+      return JSON.parse(value) as T
+    }
+
+    if (
+      value &&
+      typeof value === 'object'
+    ) {
+      return value as T
+    }
+
+    return null
+  } catch {
+    return null
+  }
+}
+
+function mapParticipant(
+  row: any
+): ChatParticipant {
+  return {
+    userId: String(row.user_id),
+
+    employeeId:
+      row.employee_id || undefined,
+
+    name:
+      row.display_name ||
+      'Colleague',
+
+    role:
+      row.participant_role ||
+      undefined,
+  }
+}
+
+function mapMessage(
+  row: any
+): ChatMessage {
+  return {
+    id: String(row.id),
+
+    conversationId:
+      String(row.conversation_id),
+
+    senderUserId:
+      String(row.sender_user_id),
+
+    senderEmployeeId:
+      row.sender_employee_id ||
+      undefined,
+
+    senderName:
+      row.sender_name ||
+      'Unknown',
+
+    content:
+      row.content || '',
+
+    attachments:
+      Array.isArray(row.attachments)
+        ? row.attachments
+        : [],
+
+    isAiMessage:
+      Boolean(row.is_ai_message),
+
+    createdAt:
+      row.created_at,
+
+    expiresAt:
+      row.expires_at ||
+      new Date(
+        new Date(row.created_at).getTime() + 14 * 24 * 60 * 60 * 1000
+      ).toISOString(),
+  }
+}
+
+/* ============================================================
+   DIRECTORY
+   ============================================================ */
+
 export async function searchSafeDirectory(
   companyId: string,
   query: string,
-  options?: { excludeEmployeeId?: string; currentEmployeeId?: string }
+  options?: {
+    excludeEmployeeId?: string
+    currentEmployeeId?: string
+  }
 ): Promise<SafeDirectoryCard[]> {
-  const list = await searchCompanyDirectory(companyId, {
-    query,
-    excludeEmployeeId: options?.excludeEmployeeId,
-    currentEmployeeId: options?.currentEmployeeId,
-  })
+  const list =
+    await searchCompanyDirectory(
+      companyId,
+      {
+        query,
 
-  return list.map(c => ({
-    id: c.employeeId,
-    employeeCode: c.employeeCode,
-    fullName: c.fullName,
-    officialEmail: c.officialEmail,
-    department: c.department,
-    designation: c.designation,
-    avatarUrl: c.avatarUrl,
+        excludeEmployeeId:
+          options?.excludeEmployeeId,
+
+        currentEmployeeId:
+          options?.currentEmployeeId,
+
+        includeInactive: false,
+      }
+    )
+
+  return list.map(employee => ({
+    id:
+      employee.employeeId,
+
+    employeeCode:
+      employee.employeeCode,
+
+    fullName:
+      employee.fullName,
+
+    officialEmail:
+      employee.officialEmail,
+
+    department:
+      employee.department,
+
+    designation:
+      employee.designation,
+
+    avatarUrl:
+      employee.avatarUrl,
   }))
 }
 
-/**
- * Fetch all conversations for a user
- */
+/* ============================================================
+   ACTIVE EMPLOYEE VALIDATION
+   ============================================================ */
+
+async function getActiveEmployeeIds(
+  companyId: string
+): Promise<Set<string>> {
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return new Set()
+  }
+
+  const {
+    data,
+    error,
+  } = await supabase
+    .from('employees')
+    .select('id')
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'is_active',
+      true
+    )
+    .in(
+      'employment_status',
+      [
+        'active',
+        'probation',
+      ]
+    )
+
+  if (error) {
+    console.error(
+      '[ChatService] Active employee validation failed:',
+      error.message
+    )
+
+    return new Set()
+  }
+
+  return new Set(
+    (data || []).map(
+      (row: any) =>
+        String(row.id)
+    )
+  )
+}
+
+function conversationHasValidEmployees(
+  conversation: ChatConversation,
+  activeEmployeeIds: Set<string>
+): boolean {
+  if (
+    conversation.type ===
+    'channel'
+  ) {
+    return true
+  }
+
+  if (
+    !conversation.participants?.length
+  ) {
+    return false
+  }
+
+  return conversation.participants.every(
+    participant =>
+      !participant.employeeId ||
+      activeEmployeeIds.has(
+        participant.employeeId
+      )
+  )
+}
+
+/* ============================================================
+   LEGACY MIGRATION
+
+   Existing company_settings records are copied into the new
+   dedicated chat tables.
+
+   The legacy records are NOT deleted.
+
+   This makes migration:
+   - repeatable
+   - non-destructive
+   - backwards safe
+   ============================================================ */
+
+export async function migrateLegacyChatData(
+  companyId: string
+): Promise<void> {
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return
+  }
+
+  /* ----------------------------
+     CONVERSATIONS
+     ---------------------------- */
+
+  const {
+    data: conversationRows,
+    error: conversationError,
+  } = await supabase
+    .from('company_settings')
+    .select(
+      'setting_value'
+    )
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'category',
+      'chat_conversation'
+    )
+
+  if (conversationError) {
+    console.error(
+      '[ChatService] Legacy conversation scan failed:',
+      conversationError.message
+    )
+
+    return
+  }
+
+  for (
+    const row of
+    conversationRows || []
+  ) {
+    const conversation =
+      parseJson<ChatConversation>(
+        row.setting_value
+      )
+
+    if (
+      !conversation?.id
+    ) {
+      continue
+    }
+
+    const {
+      error: insertError,
+    } = await supabase
+      .from(
+        'chat_conversations'
+      )
+      .upsert(
+        {
+          id:
+            conversation.id,
+
+          company_id:
+            companyId,
+
+          type:
+            conversation.type,
+
+          title:
+            conversation.title ||
+            'Conversation',
+
+          department_id:
+            conversation.departmentId ||
+            null,
+
+          created_by:
+            null,
+
+          created_at:
+            conversation.createdAt ||
+            new Date().toISOString(),
+
+          updated_at:
+            conversation.updatedAt ||
+            conversation.createdAt ||
+            new Date().toISOString(),
+        },
+        {
+          onConflict: 'id',
+          ignoreDuplicates: true,
+        }
+      )
+
+    if (insertError) {
+      console.error(
+        '[ChatService] Legacy conversation migration failed:',
+        insertError.message
+      )
+
+      continue
+    }
+
+    for (
+      const participant of
+      conversation.participants ||
+      []
+    ) {
+      if (
+        !participant.userId
+      ) {
+        continue
+      }
+
+      const {
+        error:
+          participantError,
+      } = await supabase
+        .from(
+          'chat_participants'
+        )
+        .upsert(
+          {
+            conversation_id:
+              conversation.id,
+
+            company_id:
+              companyId,
+
+            user_id:
+              participant.userId,
+
+            employee_id:
+              participant.employeeId ||
+              null,
+
+            display_name:
+              participant.name ||
+              'Colleague',
+
+            participant_role:
+              participant.role ||
+              null,
+
+            joined_at:
+              conversation.createdAt ||
+              new Date().toISOString(),
+
+            left_at:
+              null,
+          },
+          {
+            onConflict:
+              'conversation_id,user_id',
+
+            ignoreDuplicates:
+              true,
+          }
+        )
+
+      if (
+        participantError
+      ) {
+        console.error(
+          '[ChatService] Legacy participant migration failed:',
+          participantError.message
+        )
+      }
+    }
+  }
+
+  /* ----------------------------
+     MESSAGES
+     ---------------------------- */
+
+  const {
+    data: messageRows,
+    error: messageError,
+  } = await supabase
+    .from('company_settings')
+    .select(
+      'setting_value'
+    )
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'category',
+      'chat_message'
+    )
+
+  if (messageError) {
+    console.error(
+      '[ChatService] Legacy message scan failed:',
+      messageError.message
+    )
+
+    return
+  }
+
+  for (
+    const row of
+    messageRows || []
+  ) {
+    const message =
+      parseJson<ChatMessage>(
+        row.setting_value
+      )
+
+    if (
+      !message?.id ||
+      !message.conversationId
+    ) {
+      continue
+    }
+
+    const {
+      error: insertError,
+    } = await supabase
+      .from(
+        'chat_messages'
+      )
+      .upsert(
+        {
+          id:
+            message.id,
+
+          company_id:
+            companyId,
+
+          conversation_id:
+            message.conversationId,
+
+          sender_user_id:
+            message.senderUserId,
+
+          sender_employee_id:
+            message.senderEmployeeId ||
+            null,
+
+          sender_name:
+            message.senderName ||
+            'Unknown',
+
+          content:
+            message.content ||
+            '',
+
+          attachments:
+            message.attachments ||
+            [],
+
+          is_ai_message:
+            Boolean(
+              message.isAiMessage
+            ),
+
+          created_at:
+            message.createdAt ||
+            new Date().toISOString(),
+        },
+        {
+          onConflict: 'id',
+          ignoreDuplicates: true,
+        }
+      )
+
+    if (insertError) {
+      console.error(
+        '[ChatService] Legacy message migration failed:',
+        insertError.message
+      )
+    }
+  }
+}
+
+/* ============================================================
+   COMPANY ANNOUNCEMENT CHANNEL
+   ============================================================ */
+
+async function ensureCompanyBroadcastChannel(
+  companyId: string
+): Promise<void> {
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    return
+  }
+
+  const {
+    data,
+  } = await supabase
+    .from(
+      'chat_conversations'
+    )
+    .select('id')
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'id',
+      'company_announcements'
+    )
+    .maybeSingle()
+
+  if (data) {
+    return
+  }
+
+  const now =
+    new Date().toISOString()
+
+  const {
+    error:
+      conversationError,
+  } = await supabase
+    .from(
+      'chat_conversations'
+    )
+    .insert({
+      id:
+        'company_announcements',
+
+      company_id:
+        companyId,
+
+      type:
+        'channel',
+
+      title:
+        'Company Announcements',
+
+      created_by:
+        null,
+
+      created_at:
+        now,
+
+      updated_at:
+        now,
+    })
+
+  if (
+    conversationError
+  ) {
+    console.error(
+      '[ChatService] Announcement channel creation failed:',
+      conversationError.message
+    )
+
+    return
+  }
+
+  const {
+    error:
+      messageError,
+  } = await supabase
+    .from(
+      'chat_messages'
+    )
+    .insert({
+      id:
+        `msg_welcome_${Date.now()}`,
+
+      company_id:
+        companyId,
+
+      conversation_id:
+        'company_announcements',
+
+      sender_user_id:
+        'system',
+
+      sender_employee_id:
+        null,
+
+      sender_name:
+        'Haryak HR Team',
+
+      content:
+        'Welcome to Haryak Technologies internal organization chat. Stay connected with your team and colleagues across departments.',
+
+      attachments:
+        [],
+
+      is_ai_message:
+        false,
+
+      created_at:
+        now,
+    })
+
+  if (messageError) {
+    console.error(
+      '[ChatService] Announcement welcome message failed:',
+      messageError.message
+    )
+  }
+}
+
+/* ============================================================
+   CONVERSATION ACCESS
+   ============================================================ */
+
+async function assertConversationAccess(
+  companyId: string,
+  conversationId: string,
+  userId: string,
+  employeeId?: string
+): Promise<ChatConversation> {
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    throw new Error(
+      'Database unavailable'
+    )
+  }
+
+  await migrateLegacyChatData(
+    companyId
+  )
+
+  const {
+    data: conversationRow,
+    error:
+      conversationError,
+  } = await supabase
+    .from(
+      'chat_conversations'
+    )
+    .select('*')
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'id',
+      conversationId
+    )
+    .maybeSingle()
+
+  if (
+    conversationError ||
+    !conversationRow
+  ) {
+    const error: any =
+      new Error(
+        'Conversation not found'
+      )
+
+    error.status = 404
+
+    throw error
+  }
+
+  const {
+    data:
+      participantRows,
+    error:
+      participantError,
+  } = await supabase
+    .from(
+      'chat_participants'
+    )
+    .select('*')
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'conversation_id',
+      conversationId
+    )
+    .is(
+      'left_at',
+      null
+    )
+
+  if (
+    participantError
+  ) {
+    throw new Error(
+      participantError.message
+    )
+  }
+
+  const conversation:
+    ChatConversation = {
+    id:
+      String(
+        conversationRow.id
+      ),
+
+    companyId:
+      String(
+        conversationRow.company_id
+      ),
+
+    type:
+      conversationRow.type,
+
+    title:
+      conversationRow.title,
+
+    departmentId:
+      conversationRow.department_id,
+
+    participants:
+      (
+        participantRows ||
+        []
+      ).map(
+        mapParticipant
+      ),
+
+    createdAt:
+      conversationRow.created_at,
+
+    updatedAt:
+      conversationRow.updated_at,
+  }
+
+  if (
+    conversation.type !==
+    'channel'
+  ) {
+    const isParticipant =
+      conversation.participants.some(
+        participant =>
+          participant.userId ===
+            userId ||
+          Boolean(
+            employeeId &&
+            participant.employeeId ===
+              employeeId
+          )
+      )
+
+    if (
+      !isParticipant
+    ) {
+      const error: any =
+        new Error(
+          'Forbidden: You are not a participant in this conversation.'
+        )
+
+      error.status = 403
+
+      throw error
+    }
+
+    const activeEmployeeIds =
+      await getActiveEmployeeIds(
+        companyId
+      )
+
+    if (
+      !conversationHasValidEmployees(
+        conversation,
+        activeEmployeeIds
+      )
+    ) {
+      const error: any =
+        new Error(
+          'This conversation is no longer active because one or more employee participants are no longer part of the active workforce.'
+        )
+
+      error.status = 410
+
+      throw error
+    }
+  }
+
+  return conversation
+}
+
+/* ============================================================
+   GET CONVERSATIONS
+   ============================================================ */
+
 export async function getUserConversations(
   companyId: string,
   userId: string,
   employeeId?: string
 ): Promise<ChatConversation[]> {
-  const supabase = createAdminClient()
-  if (!supabase) return []
+  const supabase =
+    createAdminClient()
 
-  // Ensure default company announcement channel exists
-  await ensureCompanyBroadcastChannel(companyId)
+  if (!supabase) {
+    return []
+  }
 
-  const { data, error } = await supabase
-    .from('company_settings')
-    .select('setting_key, setting_value')
-    .eq('company_id', companyId)
-    .eq('category', 'chat_conversation')
+  await migrateLegacyChatData(
+    companyId
+  )
 
-  if (error || !data) return []
+  await ensureCompanyBroadcastChannel(
+    companyId
+  )
 
-  const conversations: ChatConversation[] = []
+  const {
+    data: rows,
+    error,
+  } = await supabase
+    .from(
+      'chat_conversations'
+    )
+    .select('*')
+    .eq(
+      'company_id',
+      companyId
+    )
+    .order(
+      'updated_at',
+      {
+        ascending: false,
+      }
+    )
 
-  for (const row of data) {
-    try {
-      const conv: ChatConversation = typeof row.setting_value === 'string' ? JSON.parse(row.setting_value) : row.setting_value
-      if (!conv || !conv.id) continue
+  if (error) {
+    console.error(
+      '[ChatService] Unable to load conversations:',
+      error.message
+    )
 
-      // Company channel is open to all company members
-      if (conv.type === 'channel') {
-        conversations.push(conv)
+    return []
+  }
+
+  const activeEmployeeIds =
+    await getActiveEmployeeIds(
+      companyId
+    )
+
+  const result:
+    ChatConversation[] = []
+
+  for (
+    const row of
+    rows || []
+  ) {
+    const {
+      data:
+        participantRows,
+    } = await supabase
+      .from(
+        'chat_participants'
+      )
+      .select('*')
+      .eq(
+        'company_id',
+        companyId
+      )
+      .eq(
+        'conversation_id',
+        row.id
+      )
+      .is(
+        'left_at',
+        null
+      )
+
+    const participants =
+      (
+        participantRows ||
+        []
+      ).map(
+        mapParticipant
+      )
+
+    if (
+      row.type !==
+      'channel'
+    ) {
+      const belongs =
+        participants.some(
+          participant =>
+            participant.userId ===
+              userId ||
+            Boolean(
+              employeeId &&
+              participant.employeeId ===
+                employeeId
+            )
+        )
+
+      if (!belongs) {
         continue
       }
 
-      // Check if user or employee is participant
-      const isParticipant = conv.participants?.some(
-        p => p.userId === userId || (employeeId && p.employeeId === employeeId)
+      const candidate:
+        ChatConversation = {
+        id:
+          String(row.id),
+
+        companyId,
+
+        type:
+          row.type,
+
+        title:
+          row.title,
+
+        departmentId:
+          row.department_id,
+
+        participants,
+
+        createdAt:
+          row.created_at,
+
+        updatedAt:
+          row.updated_at,
+      }
+
+      if (
+        !conversationHasValidEmployees(
+          candidate,
+          activeEmployeeIds
+        )
+      ) {
+        continue
+      }
+    }
+
+    const nowIso =
+      new Date().toISOString()
+
+    const cutoffIso =
+      new Date(
+        Date.now() - 14 * 24 * 60 * 60 * 1000
+      ).toISOString()
+
+    let lastRows:
+      | {
+          content: any
+          sender_name: any
+          created_at: any
+          expires_at?: any
+        }[]
+      | null = null
+
+    const primaryQuery =
+      await supabase
+        .from(
+          'chat_messages'
+        )
+        .select(
+          'content,sender_name,created_at,expires_at'
+        )
+        .eq(
+          'company_id',
+          companyId
+        )
+        .eq(
+          'conversation_id',
+          row.id
+        )
+        .is(
+          'deleted_at',
+          null
+        )
+        .gte(
+          'expires_at',
+          nowIso
+        )
+        .order(
+          'created_at',
+          {
+            ascending: false,
+          }
+        )
+        .limit(1)
+
+    lastRows =
+      primaryQuery.data
+
+    if (
+      primaryQuery.error &&
+      primaryQuery.error.message?.includes(
+        'expires_at'
+      )
+    ) {
+      const fallback =
+        await supabase
+          .from(
+            'chat_messages'
+          )
+          .select(
+            'content,sender_name,created_at'
+          )
+          .eq(
+            'company_id',
+            companyId
+          )
+          .eq(
+            'conversation_id',
+            row.id
+          )
+          .is(
+            'deleted_at',
+            null
+          )
+          .gte(
+            'created_at',
+            cutoffIso
+          )
+          .order(
+            'created_at',
+            {
+              ascending: false,
+            }
+          )
+          .limit(1)
+
+      lastRows =
+        (fallback.data as any) ||
+        null
+    }
+
+    const {
+      count:
+        unreadCount,
+    } = await supabase
+      .from(
+        'chat_message_receipts'
+      )
+      .select(
+        'id',
+        {
+          count: 'exact',
+          head: true,
+        }
+      )
+      .eq(
+        'company_id',
+        companyId
+      )
+      .eq(
+        'conversation_id',
+        row.id
+      )
+      .eq(
+        'user_id',
+        userId
+      )
+      .is(
+        'read_at',
+        null
       )
 
-      if (isParticipant) {
-        conversations.push(conv)
-      }
-    } catch {}
+    const lastCandidate =
+      lastRows?.[0]
+
+    const nowMs =
+      Date.now()
+
+    const isLastExpired =
+      lastCandidate &&
+      ((lastCandidate.expires_at &&
+        new Date(
+          lastCandidate.expires_at
+        ).getTime() <= nowMs) ||
+        nowMs -
+          new Date(
+            lastCandidate.created_at
+          ).getTime() >=
+          14 * 24 * 60 * 60 * 1000)
+
+    const last =
+      isLastExpired
+        ? null
+        : lastCandidate
+
+    result.push({
+      id:
+        String(row.id),
+
+      companyId,
+
+      type:
+        row.type,
+
+      title:
+        row.title,
+
+      departmentId:
+        row.department_id,
+
+      participants,
+
+      lastMessage:
+        last
+          ? {
+              content:
+                last.content ||
+                '',
+
+              senderName:
+                last.sender_name ||
+                'Unknown',
+
+              createdAt:
+                last.created_at,
+            }
+          : null,
+
+      unreadCount:
+        unreadCount || 0,
+
+      createdAt:
+        row.created_at,
+
+      updatedAt:
+        row.updated_at,
+    })
   }
 
-  // Sort by updatedAt descending
-  return conversations.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+  return result
 }
 
-/**
- * Create or retrieve existing direct 1-to-1 conversation or new group conversation
- */
+/* ============================================================
+   CREATE DIRECT CONVERSATION
+   ============================================================ */
+
 export async function createOrGetConversation(
   companyId: string,
-  creator: { userId: string; employeeId?: string; name: string },
+  creator: ChatActor,
   recipientEmployeeId: string,
-  options?: { type?: 'direct' | 'group' | 'channel'; title?: string }
+  options?: {
+    type?:
+      | 'direct'
+      | 'group'
+      | 'channel'
+
+    title?: string
+  }
 ): Promise<ChatConversation> {
-  const supabase = createAdminClient()
-  if (!supabase) throw new Error('Database unavailable')
+  const supabase =
+    createAdminClient()
 
-  const type = options?.type || 'direct'
+  if (!supabase) {
+    throw new Error(
+      'Database unavailable'
+    )
+  }
 
-  // Fetch recipient employee
-  const { data: recipientEmp } = await supabase
+  await migrateLegacyChatData(
+    companyId
+  )
+
+  const type =
+    options?.type ||
+    'direct'
+
+  const {
+    data: recipient,
+    error:
+      recipientError,
+  } = await supabase
     .from('employees')
-    .select('id, employee_code, full_name, user_id')
-    .eq('company_id', companyId)
-    .eq('id', recipientEmployeeId)
+    .select(`
+      id,
+      employee_code,
+      full_name,
+      user_id,
+      is_active,
+      employment_status
+    `)
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'id',
+      recipientEmployeeId
+    )
+    .eq(
+      'is_active',
+      true
+    )
+    .in(
+      'employment_status',
+      [
+        'active',
+        'probation',
+      ]
+    )
     .maybeSingle()
 
-  if (!recipientEmp && type === 'direct') {
-    throw new Error('Recipient employee not found')
-  }
-
-  const recipientParticipant: ChatParticipant = {
-    userId: recipientEmp?.user_id || recipientEmployeeId,
-    employeeId: recipientEmp?.id || recipientEmployeeId,
-    name: recipientEmp?.full_name || 'Colleague',
-  }
-
-  const creatorParticipant: ChatParticipant = {
-    userId: creator.userId,
-    employeeId: creator.employeeId,
-    name: creator.name,
-  }
-
-  // For 1-to-1 direct chats, check if conversation already exists
-  if (type === 'direct') {
-    const existingList = await getUserConversations(companyId, creator.userId, creator.employeeId)
-    const existing = existingList.find(c =>
-      c.type === 'direct' &&
-      c.participants.some(p => p.employeeId === recipientEmp?.id || p.userId === recipientEmp?.user_id) &&
-      c.participants.some(p => p.employeeId === creator.employeeId || p.userId === creator.userId)
+  if (
+    recipientError
+  ) {
+    throw new Error(
+      `Unable to validate recipient: ${recipientError.message}`
     )
+  }
+
+  if (
+    type === 'direct' &&
+    !recipient
+  ) {
+    throw new Error(
+      'Recipient employee is not available for messaging.'
+    )
+  }
+
+  if (
+    type === 'direct' &&
+    recipient
+  ) {
+    const conversations =
+      await getUserConversations(
+        companyId,
+        creator.userId,
+        creator.employeeId
+      )
+
+    const existing =
+      conversations.find(
+        conversation =>
+          conversation.type ===
+            'direct' &&
+
+          conversation.participants.some(
+            participant =>
+              participant.employeeId ===
+                recipient.id ||
+              participant.userId ===
+                recipient.user_id
+          ) &&
+
+          conversation.participants.some(
+            participant =>
+              participant.employeeId ===
+                creator.employeeId ||
+              participant.userId ===
+                creator.userId
+          )
+      )
 
     if (existing) {
       return existing
     }
   }
 
-  const convId = `conv_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-  const now = new Date().toISOString()
-  const title = options?.title || (type === 'direct' ? recipientParticipant.name : 'Group Chat')
+  const conversationId =
+    `conv_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 8)}`
 
-  const newConv: ChatConversation = {
-    id: convId,
-    companyId,
-    type,
-    title,
-    participants: [creatorParticipant, recipientParticipant],
-    lastMessage: null,
-    createdAt: now,
-    updatedAt: now,
-  }
+  const now =
+    new Date().toISOString()
 
-  await supabase
-    .from('company_settings')
+  const title =
+    options?.title ||
+    (
+      type === 'direct'
+        ? recipient?.full_name ||
+          'Colleague'
+        : 'Group Chat'
+    )
+
+  const {
+    error:
+      conversationError,
+  } = await supabase
+    .from(
+      'chat_conversations'
+    )
     .insert({
-      company_id: companyId,
-      category: 'chat_conversation',
-      setting_key: `chat_conv_${convId}`,
-      setting_value: newConv,
+      id:
+        conversationId,
+
+      company_id:
+        companyId,
+
+      type,
+
+      title,
+
+      created_by:
+        creator.userId,
+
+      created_at:
+        now,
+
+      updated_at:
+        now,
     })
 
-  return newConv
-}
+  if (
+    conversationError
+  ) {
+    throw new Error(
+      conversationError.message
+    )
+  }
 
-/**
- * Ensure default company-wide announcement channel exists
- */
-async function ensureCompanyBroadcastChannel(companyId: string): Promise<void> {
-  const supabase = createAdminClient()
-  if (!supabase) return
+  const participants:
+    ChatParticipant[] = [
+    {
+      userId:
+        creator.userId,
 
-  const defaultKey = 'chat_conv_company_announcements'
-  const { data } = await supabase
-    .from('company_settings')
-    .select('setting_key')
-    .eq('company_id', companyId)
-    .eq('setting_key', defaultKey)
-    .maybeSingle()
+      employeeId:
+        creator.employeeId,
 
-  if (!data) {
-    const now = new Date().toISOString()
-    const broadcastConv: ChatConversation = {
-      id: 'company_announcements',
-      companyId,
-      type: 'channel',
-      title: 'Company Announcements',
-      participants: [],
-      lastMessage: {
-        content: 'Welcome to Haryak Technologies internal organization chat.',
-        senderName: 'Haryak HR Team',
-        createdAt: now,
-      },
-      createdAt: now,
-      updatedAt: now,
-    }
+      name:
+        creator.name,
+    },
+  ]
 
-    await supabase.from('company_settings').insert({
-      company_id: companyId,
-      category: 'chat_conversation',
-      setting_key: defaultKey,
-      setting_value: broadcastConv,
+  if (recipient) {
+    participants.push({
+      userId:
+        recipient.user_id ||
+        recipient.id,
+
+      employeeId:
+        recipient.id,
+
+      name:
+        recipient.full_name ||
+        'Colleague',
     })
+  }
 
-    // Seed welcome message
-    const welcomeMsg: ChatMessage = {
-      id: `msg_welcome_${Date.now()}`,
-      conversationId: 'company_announcements',
-      senderUserId: 'system',
-      senderName: 'Haryak HR Team',
-      content: 'Welcome to Haryak Technologies internal organization chat. Stay connected with your team and colleagues across departments.',
-      createdAt: now,
-    }
+  const {
+    error:
+      participantError,
+  } = await supabase
+    .from(
+      'chat_participants'
+    )
+    .insert(
+      participants.map(
+        participant => ({
+          conversation_id:
+            conversationId,
 
-    await supabase.from('company_settings').insert({
-      company_id: companyId,
-      category: 'chat_message',
-      setting_key: `chat_msg_${welcomeMsg.id}`,
-      setting_value: welcomeMsg,
-    })
+          company_id:
+            companyId,
+
+          user_id:
+            participant.userId,
+
+          employee_id:
+            participant.employeeId ||
+            null,
+
+          display_name:
+            participant.name,
+
+          participant_role:
+            participant.role ||
+            null,
+
+          joined_at:
+            now,
+        })
+      )
+    )
+
+  if (
+    participantError
+  ) {
+    await supabase
+      .from(
+        'chat_conversations'
+      )
+      .delete()
+      .eq(
+        'id',
+        conversationId
+      )
+
+    throw new Error(
+      participantError.message
+    )
+  }
+
+  return {
+    id:
+      conversationId,
+
+    companyId,
+
+    type,
+
+    title,
+
+    participants,
+
+    lastMessage:
+      null,
+
+    unreadCount:
+      0,
+
+    createdAt:
+      now,
+
+    updatedAt:
+      now,
   }
 }
 
-/**
- * Get messages for a conversation with strict participant-only authorization
- */
+/* ============================================================
+   GET MESSAGES + RECEIPT STATUS
+   ============================================================ */
+
 export async function getConversationMessages(
   companyId: string,
   conversationId: string,
   userId: string,
   employeeId?: string
 ): Promise<ChatMessage[]> {
-  const supabase = createAdminClient()
-  if (!supabase) return []
+  const supabase =
+    createAdminClient()
 
-  // Check conversation authorization
-  const { data: convRow, error: convErr } = await supabase
-    .from('company_settings')
-    .select('setting_value')
-    .eq('company_id', companyId)
-    .eq('setting_key', `chat_conv_${conversationId}`)
-    .maybeSingle()
-
-  if (convErr || !convRow) {
-    throw new Error('Conversation not found')
+  if (!supabase) {
+    return []
   }
 
-  const conv: ChatConversation = typeof convRow.setting_value === 'string'
-    ? JSON.parse(convRow.setting_value)
-    : convRow.setting_value
+  await assertConversationAccess(
+    companyId,
+    conversationId,
+    userId,
+    employeeId
+  )
 
-  if (conv.type !== 'channel') {
-    const isParticipant = conv.participants?.some(
-      p => p.userId === userId || (employeeId && p.employeeId === employeeId)
+  const nowIso =
+    new Date().toISOString()
+
+  const cutoffIso =
+    new Date(
+      Date.now() - 14 * 24 * 60 * 60 * 1000
+    ).toISOString()
+
+  let {
+    data: rows,
+    error,
+  } = await supabase
+    .from(
+      'chat_messages'
     )
-    if (!isParticipant) {
-      const err: any = new Error('Forbidden: You are not a participant in this conversation.')
-      err.status = 403
-      throw err
-    }
-  }
-
-  // Fetch messages
-  const { data: msgRows, error: msgErr } = await supabase
-    .from('company_settings')
-    .select('setting_value')
-    .eq('company_id', companyId)
-    .eq('category', 'chat_message')
-
-  if (msgErr || !msgRows) return []
-
-  const messages: ChatMessage[] = []
-  for (const r of msgRows) {
-    try {
-      const msg: ChatMessage = typeof r.setting_value === 'string' ? JSON.parse(r.setting_value) : r.setting_value
-      if (msg && msg.conversationId === conversationId) {
-        messages.push(msg)
+    .select('*')
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'conversation_id',
+      conversationId
+    )
+    .is(
+      'deleted_at',
+      null
+    )
+    .gte(
+      'expires_at',
+      nowIso
+    )
+    .order(
+      'created_at',
+      {
+        ascending: true,
       }
-    } catch {}
+    )
+
+  if (error && error.message?.includes('expires_at')) {
+    const fallback = await supabase
+      .from(
+        'chat_messages'
+      )
+      .select('*')
+      .eq(
+        'company_id',
+        companyId
+      )
+      .eq(
+        'conversation_id',
+        conversationId
+      )
+      .is(
+        'deleted_at',
+        null
+      )
+      .gte(
+        'created_at',
+        cutoffIso
+      )
+      .order(
+        'created_at',
+        {
+          ascending: true,
+        }
+      )
+
+    rows = fallback.data
+    error = fallback.error
   }
 
-  return messages.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  if (error) {
+    throw new Error(
+      error.message
+    )
+  }
+
+  const nowMs = Date.now()
+  const messages = (rows || [])
+    .filter(row => {
+      if (row.expires_at) {
+        return new Date(row.expires_at).getTime() > nowMs
+      }
+      return (
+        nowMs - new Date(row.created_at).getTime() <
+        14 * 24 * 60 * 60 * 1000
+      )
+    })
+    .map(
+      mapMessage
+    )
+
+  for (
+    const message of
+    messages
+  ) {
+    if (
+      message.senderUserId !==
+      userId
+    ) {
+      continue
+    }
+
+    const {
+      data: receipts,
+    } = await supabase
+      .from(
+        'chat_message_receipts'
+      )
+      .select(
+        'delivered_at,read_at'
+      )
+      .eq(
+        'company_id',
+        companyId
+      )
+      .eq(
+        'message_id',
+        message.id
+      )
+      .neq(
+        'user_id',
+        userId
+      )
+
+    const receiptRows =
+      receipts || []
+
+    if (
+      receiptRows.length ===
+      0
+    ) {
+      message.receiptStatus =
+        'sent'
+
+      continue
+    }
+
+    const allRead =
+      receiptRows.every(
+        receipt =>
+          Boolean(
+            receipt.read_at
+          )
+      )
+
+    const allDelivered =
+      receiptRows.every(
+        receipt =>
+          Boolean(
+            receipt.delivered_at
+          )
+      )
+
+    message.receiptStatus =
+      allRead
+        ? 'read'
+        : allDelivered
+          ? 'delivered'
+          : 'sent'
+
+    const deliveredTimes =
+      receiptRows
+        .map(
+          receipt =>
+            receipt.delivered_at
+        )
+        .filter(Boolean)
+        .sort()
+
+    const readTimes =
+      receiptRows
+        .map(
+          receipt =>
+            receipt.read_at
+        )
+        .filter(Boolean)
+        .sort()
+
+    message.deliveredAt =
+      deliveredTimes[
+        deliveredTimes.length -
+          1
+      ] || null
+
+    message.readAt =
+      readTimes[
+        readTimes.length -
+          1
+      ] || null
+  }
+
+  return messages
 }
 
-/**
- * Send a message in a conversation
- */
+/* ============================================================
+   SEND MESSAGE
+   ============================================================ */
+
 export async function sendChatMessage(
   companyId: string,
   conversationId: string,
-  sender: { userId: string; employeeId?: string; name: string },
+  sender: ChatActor,
   content: string,
-  attachments?: { name: string; url: string; size?: number; type?: string }[]
+  attachments?: {
+    name: string
+    url: string
+    size?: number
+    type?: string
+  }[]
 ): Promise<ChatMessage> {
-  const supabase = createAdminClient()
-  if (!supabase) throw new Error('Database unavailable')
+  const supabase =
+    createAdminClient()
 
-  if (!content.trim() && (!attachments || attachments.length === 0)) {
-    throw new Error('Message content or attachment is required')
-  }
-
-  // Verify conversation and authorization
-  const { data: convRow, error: convErr } = await supabase
-    .from('company_settings')
-    .select('setting_value')
-    .eq('company_id', companyId)
-    .eq('setting_key', `chat_conv_${conversationId}`)
-    .maybeSingle()
-
-  if (convErr || !convRow) {
-    throw new Error('Conversation not found')
-  }
-
-  const conv: ChatConversation = typeof convRow.setting_value === 'string'
-    ? JSON.parse(convRow.setting_value)
-    : convRow.setting_value
-
-  if (conv.type !== 'channel') {
-    const isParticipant = conv.participants?.some(
-      p => p.userId === sender.userId || (sender.employeeId && p.employeeId === sender.employeeId)
+  if (!supabase) {
+    throw new Error(
+      'Database unavailable'
     )
-    if (!isParticipant) {
-      const err: any = new Error('Forbidden: You are not a participant in this conversation.')
-      err.status = 403
-      throw err
+  }
+
+  if (
+    !content.trim() &&
+    !attachments?.length
+  ) {
+    throw new Error(
+      'Message content or attachment is required'
+    )
+  }
+
+  const conversation =
+    await assertConversationAccess(
+      companyId,
+      conversationId,
+      sender.userId,
+      sender.employeeId
+    )
+
+  const messageId =
+    `msg_${Date.now()}_${Math.random()
+      .toString(36)
+      .substring(2, 8)}`
+
+  const now =
+    new Date()
+
+  const createdAtIso =
+    now.toISOString()
+
+  const expiresAtIso =
+    new Date(
+      now.getTime() + 14 * 24 * 60 * 60 * 1000
+    ).toISOString()
+
+  const {
+    error:
+      messageError,
+  } = await supabase
+    .from(
+      'chat_messages'
+    )
+    .insert({
+      id:
+        messageId,
+
+      company_id:
+        companyId,
+
+      conversation_id:
+        conversationId,
+
+      sender_user_id:
+        sender.userId,
+
+      sender_employee_id:
+        sender.employeeId ||
+        null,
+
+      sender_name:
+        sender.name,
+
+      content:
+        content.trim(),
+
+      attachments:
+        attachments ||
+        [],
+
+      is_ai_message:
+        false,
+
+      created_at:
+        createdAtIso,
+
+      expires_at:
+        expiresAtIso,
+    })
+
+  if (messageError) {
+    throw new Error(
+      `Unable to send message: ${messageError.message}`
+    )
+  }
+
+  /*
+   * Receipt rows are created only for recipients.
+   *
+   * Sender never receives a receipt row for their own message.
+   */
+  if (
+    conversation.type !==
+    'channel'
+  ) {
+    const recipients =
+      conversation.participants.filter(
+        participant =>
+          participant.userId !==
+          sender.userId
+      )
+
+    if (
+      recipients.length >
+      0
+    ) {
+      const {
+        error:
+          receiptError,
+      } = await supabase
+        .from(
+          'chat_message_receipts'
+        )
+        .insert(
+          recipients.map(
+            recipient => ({
+              message_id:
+                messageId,
+
+              conversation_id:
+                conversationId,
+
+              company_id:
+                companyId,
+
+              user_id:
+                recipient.userId,
+
+              delivered_at:
+                null,
+
+              read_at:
+                null,
+
+              created_at:
+                now,
+
+              updated_at:
+                now,
+            })
+          )
+        )
+
+      if (
+        receiptError
+      ) {
+        console.error(
+          '[ChatService] Receipt creation failed:',
+          receiptError.message
+        )
+      }
     }
   }
 
-  const msgId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-  const now = new Date().toISOString()
-
-  const message: ChatMessage = {
-    id: msgId,
-    conversationId,
-    senderUserId: sender.userId,
-    senderEmployeeId: sender.employeeId,
-    senderName: sender.name,
-    content: content.trim(),
-    attachments: attachments || [],
-    createdAt: now,
-  }
-
-  // Insert message
-  await supabase
-    .from('company_settings')
-    .insert({
-      company_id: companyId,
-      category: 'chat_message',
-      setting_key: `chat_msg_${msgId}`,
-      setting_value: message,
-    })
-
-  // Update conversation lastMessage & updatedAt
-  conv.lastMessage = {
-    content: message.content,
-    senderName: message.senderName,
-    createdAt: now,
-  }
-  conv.updatedAt = now
-
-  await supabase
-    .from('company_settings')
+  const {
+    error:
+      conversationUpdateError,
+  } = await supabase
+    .from(
+      'chat_conversations'
+    )
     .update({
-      setting_value: conv,
-      updated_at: now,
+      updated_at:
+        now,
     })
-    .eq('company_id', companyId)
-    .eq('setting_key', `chat_conv_${conversationId}`)
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'id',
+      conversationId
+    )
 
-  return message
+  if (
+    conversationUpdateError
+  ) {
+    console.error(
+      '[ChatService] Conversation timestamp update failed:',
+      conversationUpdateError.message
+    )
+  }
+
+  return {
+    id:
+      messageId,
+
+    conversationId,
+
+    senderUserId:
+      sender.userId,
+
+    senderEmployeeId:
+      sender.employeeId,
+
+    senderName:
+      sender.name,
+
+    content:
+      content.trim(),
+
+    attachments:
+      attachments ||
+      [],
+
+    receiptStatus:
+      'sent',
+
+    createdAt:
+      createdAtIso,
+
+    expiresAt:
+      expiresAtIso,
+  }
+}
+
+/* ============================================================
+   DELIVERY / READ ACKNOWLEDGEMENT
+   ============================================================ */
+
+export async function acknowledgeConversationMessages(
+  companyId: string,
+  conversationId: string,
+  userId: string,
+  employeeId: string | undefined,
+  mode:
+    | 'delivered'
+    | 'read'
+): Promise<void> {
+  const supabase =
+    createAdminClient()
+
+  if (!supabase) {
+    throw new Error(
+      'Database unavailable'
+    )
+  }
+
+  await assertConversationAccess(
+    companyId,
+    conversationId,
+    userId,
+    employeeId
+  )
+
+  const now =
+    new Date().toISOString()
+
+  const {
+    data: receipts,
+    error,
+  } = await supabase
+    .from(
+      'chat_message_receipts'
+    )
+    .select(
+      'id,delivered_at,read_at'
+    )
+    .eq(
+      'company_id',
+      companyId
+    )
+    .eq(
+      'conversation_id',
+      conversationId
+    )
+    .eq(
+      'user_id',
+      userId
+    )
+
+  if (error) {
+    throw new Error(
+      error.message
+    )
+  }
+
+  const pending =
+    (
+      receipts ||
+      []
+    ).filter(
+      receipt =>
+        mode === 'read'
+          ? !receipt.read_at
+          : !receipt.delivered_at
+    )
+
+  for (
+    const receipt of
+    pending
+  ) {
+    const update =
+      mode === 'read'
+        ? {
+            delivered_at:
+              receipt.delivered_at ||
+              now,
+
+            read_at:
+              now,
+
+            updated_at:
+              now,
+          }
+        : {
+            delivered_at:
+              now,
+
+            updated_at:
+              now,
+          }
+
+    const {
+      error:
+        updateError,
+    } = await supabase
+      .from(
+        'chat_message_receipts'
+      )
+      .update(update)
+      .eq(
+        'id',
+        receipt.id
+      )
+      .eq(
+        'company_id',
+        companyId
+      )
+      .eq(
+        'user_id',
+        userId
+      )
+
+    if (
+      updateError
+    ) {
+      throw new Error(
+        updateError.message
+      )
+    }
+  }
 }
