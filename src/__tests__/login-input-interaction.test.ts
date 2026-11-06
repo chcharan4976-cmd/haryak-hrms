@@ -211,5 +211,25 @@ describe('Login Input & Component Contract Tests', () => {
       expect(formState.password).toBe('Password123!')
     })
   })
+
+  describe('Admin Email Privacy & Neutral Placeholder Security Invariants', () => {
+    it('verifies that login/page.tsx contains no hardcoded administrator emails', async () => {
+      const fs = await import('fs')
+      const path = await import('path')
+      const loginPagePath = path.resolve(__dirname, '../app/(auth)/login/page.tsx')
+      const source = fs.readFileSync(loginPagePath, 'utf-8')
+
+      // Must not expose real or mock administrator emails in placeholders or defaults
+      expect(source).not.toContain('haryak@admin.com')
+      expect(source).not.toContain('admin@haryak.com')
+
+      // Must use neutral placeholders
+      expect(source).toContain("'Enter administrator email'")
+      expect(source).toContain("'Enter employee email or ID'")
+
+      // Must default identifier to empty string
+      expect(source).toContain("identifier: '',")
+    })
+  })
 })
 

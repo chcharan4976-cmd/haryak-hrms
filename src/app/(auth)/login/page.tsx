@@ -440,8 +440,8 @@ export default function LoginPage() {
                       }
                       placeholder={
                         loginMode === 'ADMIN'
-                          ? 'haryak@admin.com'
-                          : 'e.g. HRK-001 or employee@haryak.com'
+                          ? 'Enter administrator email'
+                          : 'Enter employee email or ID'
                       }
                       className="h-10 pl-10 text-xs"
                       disabled={isLoading}

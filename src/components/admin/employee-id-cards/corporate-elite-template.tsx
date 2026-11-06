@@ -40,6 +40,7 @@ export function CorporateEliteTemplate({
     phone = '',
     email = '',
     photoUrl = null,
+    companyName = 'Haryak Technologies India Private Limited',
     companyWebsite = 'www.haryak.com',
   } = data
 
@@ -49,6 +50,7 @@ export function CorporateEliteTemplate({
   const displayPhone = phone || '+91 6302 355 693'
   const displayEmail = email || 'charan@haryak.com'
   const displayWebsite = companyWebsite || 'www.haryak.com'
+  const displayCompany = companyName || 'Haryak Technologies India Private Limited'
 
   return (
     <div
@@ -168,7 +170,7 @@ export function CorporateEliteTemplate({
             textShadow: '0 1px 2px rgba(0,0,0,0.25)',
           }}
         >
-          Haryak Technologies India Private Limited
+          {displayCompany}
         </div>
       </div>
 

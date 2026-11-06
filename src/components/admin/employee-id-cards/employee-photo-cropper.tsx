@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useRef, useEffect, ChangeEvent } from 'react'
+import React, { useState, useRef, useEffect, ChangeEvent, useCallback } from 'react'
 import { Upload, ZoomIn, ZoomOut, RotateCcw, Image as ImageIcon, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { toast } from 'sonner'
@@ -30,12 +30,14 @@ export function EmployeePhotoCropper({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const imageRef = useRef<HTMLImageElement>(null)
 
-  // Sync when employee selection changes currentPhotoUrl
+  // Sync when employee selection or external photo changes
   useEffect(() => {
     if (currentPhotoUrl) {
       setSelectedFileUrl(currentPhotoUrl)
       setZoom(1)
       setOffset({ x: 0, y: 0 })
+    } else {
+      setSelectedFileUrl(null)
     }
   }, [currentPhotoUrl])
 
@@ -60,7 +62,7 @@ export function EmployeePhotoCropper({
       setZoom(1)
       setOffset({ x: 0, y: 0 })
       onPhotoProcessed(dataUrl)
-      toast.success('Photo loaded. You can zoom and adjust position.')
+      toast.success('Photo loaded successfully. You can zoom and adjust position.')
     }
     reader.readAsDataURL(file)
   }
@@ -85,22 +87,28 @@ export function EmployeePhotoCropper({
   const handleReset = () => {
     setZoom(1)
     setOffset({ x: 0, y: 0 })
+    if (selectedFileUrl) {
+      onPhotoProcessed(selectedFileUrl)
+    }
   }
 
-  // Export cropped canvas matching selected shape (circle or portrait rectangle)
-  const handleApplyCrop = () => {
+  // Export cropped canvas matching selected shape with ultra-sharp 1200px internal resolution
+  const handleApplyCrop = useCallback(() => {
     if (!selectedFileUrl) return
 
     const canvas = document.createElement('canvas')
-    const size = 600
+    const size = 1200
     canvas.width = size
-    canvas.height = cropShape === 'circle' ? size : Math.round(size * 1.25)
+    // For rect, match exact 126 × 152 portrait ratio (1.2063)
+    canvas.height = cropShape === 'circle' ? size : Math.round(size * 1.2063)
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => {
+      ctx.imageSmoothingEnabled = true
+      ctx.imageSmoothingQuality = 'high'
       ctx.clearRect(0, 0, canvas.width, canvas.height)
 
       // Calculate position based on zoom and offset
@@ -112,11 +120,22 @@ export function EmployeePhotoCropper({
 
       ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight)
 
-      const croppedDataUrl = canvas.toDataURL('image/png', 0.95)
+      const croppedDataUrl = canvas.toDataURL('image/png', 1.0)
       onPhotoProcessed(croppedDataUrl)
-      toast.success('Photograph adjusted and applied to preview.')
+      toast.success('Photograph adjusted with high-resolution processing.')
     }
     img.src = selectedFileUrl
+  }, [selectedFileUrl, cropShape, zoom, offset, onPhotoProcessed])
+
+  const handleRemovePhoto = () => {
+    setSelectedFileUrl(null)
+    setZoom(1)
+    setOffset({ x: 0, y: 0 })
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+    onPhotoProcessed('')
+    toast.info('Photograph removed. Initials avatar will be displayed.')
   }
 
   return (
@@ -124,7 +143,7 @@ export function EmployeePhotoCropper({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
           <ImageIcon className="w-4 h-4 text-blue-600" />
-          Employee Photograph
+          Employee Photograph <span className="text-rose-500">*</span>
         </h3>
         <span className="text-[11px] text-muted-foreground font-medium">
           JPG, PNG • Max {MAX_SIZE_MB}MB
@@ -156,7 +175,7 @@ export function EmployeePhotoCropper({
           ) : (
             <div className="text-center p-2 text-slate-400">
               <Upload className="w-8 h-8 mx-auto mb-1 opacity-60" />
-              <span className="text-[10px] block">Click Upload</span>
+              <span className="text-[10px] block font-medium">Click Upload</span>
             </div>
           )}
 
@@ -187,22 +206,18 @@ export function EmployeePhotoCropper({
               className="text-xs"
             >
               <Upload className="w-3.5 h-3.5 mr-1.5" />
-              Upload Custom Photo
+              {selectedFileUrl ? 'Replace Photograph' : 'Upload Photograph'}
             </Button>
 
-            {currentPhotoUrl && selectedFileUrl !== currentPhotoUrl && (
+            {selectedFileUrl && (
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => {
-                  setSelectedFileUrl(currentPhotoUrl)
-                  onPhotoProcessed(currentPhotoUrl)
-                  handleReset()
-                }}
-                className="text-xs"
+                onClick={handleRemovePhoto}
+                className="text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/30"
               >
-                Use DB Profile Photo
+                Remove Photo
               </Button>
             )}
           </div>
@@ -216,17 +231,28 @@ export function EmployeePhotoCropper({
                   variant="outline"
                   size="icon"
                   className="h-7 w-7"
-                  onClick={() => setZoom(z => Math.max(0.8, z - 0.1))}
+                  onClick={() => setZoom(z => Math.max(0.6, Number((z - 0.1).toFixed(1))))}
+                  title="Zoom Out"
                 >
                   <ZoomOut className="w-3.5 h-3.5" />
                 </Button>
+                <input
+                  type="range"
+                  min="0.6"
+                  max="3.0"
+                  step="0.05"
+                  value={zoom}
+                  onChange={e => setZoom(parseFloat(e.target.value))}
+                  className="w-24 h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
                 <span className="text-xs font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
                 <Button
                   type="button"
                   variant="outline"
                   size="icon"
                   className="h-7 w-7"
-                  onClick={() => setZoom(z => Math.min(2.5, z + 0.1))}
+                  onClick={() => setZoom(z => Math.min(3.0, Number((z + 0.1).toFixed(1))))}
+                  title="Zoom In"
                 >
                   <ZoomIn className="w-3.5 h-3.5" />
                 </Button>
@@ -236,7 +262,7 @@ export function EmployeePhotoCropper({
                   size="icon"
                   className="h-7 w-7 ml-auto"
                   onClick={handleReset}
-                  title="Reset Position"
+                  title="Reset Position and Zoom"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </Button>

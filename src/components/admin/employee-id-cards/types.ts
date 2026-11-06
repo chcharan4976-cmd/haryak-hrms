@@ -10,6 +10,9 @@ export interface IDCardData {
   companyName?: string
   companyTagline?: string
   companyWebsite?: string
+  joiningDate?: string
+  bloodGroup?: string
+  companyAddress?: string
 }
 
 export type IDCardDesignType = 'CORPORATE_ELITE' | 'MODERN_EXECUTIVE'

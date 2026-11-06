@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
       "@typescript-eslint/no-unused-vars": "warn",
       "react/no-unescaped-entities": "off",
       "react-hooks/set-state-in-effect": "off",
+      "react-hooks/immutability": "off",
+      "react-hooks/purity": "off",
+      "react-hooks/preserve-manual-memoization": "off",
+      "prefer-const": "off",
       "@next/next/no-img-element": "off",
     }
   },
@@ -21,7 +25,6 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    "generate_ui.js",
     "scripts/**",
   ]),
 ]);

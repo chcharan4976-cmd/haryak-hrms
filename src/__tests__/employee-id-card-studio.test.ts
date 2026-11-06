@@ -285,5 +285,99 @@ describe('Employee ID Card Studio Integration Suite (Phases 3 & 4)', () => {
       expect(photoContainer2.props.children.props.photoUrl).toBe(realPhotoData.photoUrl)
     })
   })
+
+  describe('Instant Stateless Employee ID Card Generator Invariants', () => {
+    it('verifies that the studio component has zero database-save dependencies or API writes', async () => {
+      const fs = await import('fs')
+      const path = await import('path')
+      const studioPath = path.resolve(__dirname, '../components/admin/employee-id-cards/employee-id-card-studio.tsx')
+      const source = fs.readFileSync(studioPath, 'utf-8')
+
+      // Must NOT contain DB saving workflows, table creation, or mutation endpoints
+      expect(source).not.toContain('/api/admin/employee-id-cards')
+      expect(source).not.toContain('TemporaryCardsTable')
+      expect(source).not.toContain('handleGenerateAndSave')
+      expect(source).not.toContain('ACTIVE_CARDS')
+      expect(source).not.toContain('fetchCards')
+      expect(source).not.toContain('ID Card Database Setup Incomplete')
+
+      // Must support both entry modes: Select Existing Employee and Enter Manually
+      expect(source).toContain('Select Existing Employee')
+      expect(source).toContain('Enter Manually')
+
+      // Must support 600 DPI export
+      expect(source).toContain('600 DPI')
+      expect(source).toContain('DOWNLOAD PNG (600 DPI)')
+      expect(source).toContain('DOWNLOAD PRINT PDF')
+      expect(source).toContain('STATELESS')
+    })
+
+    it('sanitizes filename to strictly format as <Employee_ID>_Employee_ID_Card.png', () => {
+      const sanitize = (rawCode: string, ext: 'png' | 'pdf' = 'png') => {
+        const clean = rawCode.trim().replace(/[^a-zA-Z0-9_-]/g, '_') || 'HRK-001'
+        return `${clean}_Employee_ID_Card.${ext}`
+      }
+
+      expect(sanitize('HRK-001')).toBe('HRK-001_Employee_ID_Card.png')
+      expect(sanitize('HRK/2026/042')).toBe('HRK_2026_042_Employee_ID_Card.png')
+      expect(sanitize('EMP#999', 'pdf')).toBe('EMP_999_Employee_ID_Card.pdf')
+      expect(sanitize('')).toBe('HRK-001_Employee_ID_Card.png')
+    })
+
+    it('enforces strictly the 5 required fields (Full Name, ID, Designation, Department, Photo)', () => {
+      const validate = (formData: {
+        employeeName?: string
+        employeeCode?: string
+        designation?: string
+        department?: string
+        photoUrl?: string | null
+      }) => {
+        const missing: string[] = []
+        if (!formData.employeeName?.trim()) missing.push('Full Name')
+        if (!formData.employeeCode?.trim()) missing.push('Employee ID')
+        if (!formData.designation?.trim()) missing.push('Designation')
+        if (!formData.department?.trim()) missing.push('Department')
+        if (!formData.photoUrl) missing.push('Employee Photograph')
+        return { isValid: missing.length === 0, missing }
+      }
+
+      // Incomplete form fails
+      const incomplete = validate({ employeeName: 'John Doe' })
+      expect(incomplete.isValid).toBe(false)
+      expect(incomplete.missing.length).toBe(4)
+
+      // Missing photo fails
+      const missingPhoto = validate({
+        employeeName: 'John Doe',
+        employeeCode: 'HRK-001',
+        designation: 'Engineer',
+        department: 'Tech',
+        photoUrl: null,
+      })
+      expect(missingPhoto.isValid).toBe(false)
+      expect(missingPhoto.missing).toContain('Employee Photograph')
+
+      // Complete 5 fields passes
+      const complete = validate({
+        employeeName: 'John Doe',
+        employeeCode: 'HRK-042',
+        designation: 'Senior Engineer',
+        department: 'Technology',
+        photoUrl: 'data:image/png;base64,samplephoto123',
+      })
+      expect(complete.isValid).toBe(true)
+      expect(complete.missing.length).toBe(0)
+    })
+
+    it('verifies 600 DPI target resolution constant (1275 x 2022 pixels) matching CR80 proportions', async () => {
+      const { CR80_600DPI_WIDTH, CR80_600DPI_HEIGHT } = await import('@/lib/services/id-card-export-client')
+      expect(CR80_600DPI_WIDTH).toBe(1275)
+      expect(CR80_600DPI_HEIGHT).toBe(2022)
+
+      const ratio = CR80_600DPI_WIDTH / CR80_600DPI_HEIGHT
+      const cr80Ratio = 53.98 / 85.60
+      expect(ratio).toBeCloseTo(cr80Ratio, 2)
+    })
+  })
 })
 

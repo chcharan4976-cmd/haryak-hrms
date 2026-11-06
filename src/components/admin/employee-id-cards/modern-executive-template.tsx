@@ -43,7 +43,9 @@ export function ModernExecutiveTemplate({
     phone = '',
     email = '',
     location = '',
+    companyAddress = '',
     photoUrl = null,
+    companyName = '',
     companyWebsite = 'www.haryak.com',
   } = data
 
@@ -53,8 +55,12 @@ export function ModernExecutiveTemplate({
   const displayDept = department || 'Software Development'
   const displayPhone = phone || '+91 6302 355 693'
   const displayEmail = email || 'charan@haryak.com'
-  const displayLoc = location || 'Headquarters'
+  const displayLoc = location || companyAddress || 'Headquarters'
   const displayWebsite = companyWebsite || 'www.haryak.com'
+  const displayCompany =
+    companyName && companyName !== 'Haryak Technologies India Private Limited'
+      ? companyName
+      : 'Haryak Technologies India Pvt. Ltd.'
 
   return (
     <div
@@ -313,7 +319,7 @@ export function ModernExecutiveTemplate({
             letterSpacing: '0.2px',
           }}
         >
-          Haryak Technologies India Pvt. Ltd.
+          {displayCompany}
         </span>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#F4F8FF' }}>

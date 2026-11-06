@@ -1,14 +1,14 @@
 /**
  * Haryak Technologies India Private Limited
- * Ultra-High-Resolution & Print-Ready CR80 ID Card Exporter
+ * Ultra-High-Resolution & Print-Ready CR80 ID Card Exporter (600 DPI)
  *
  * Capabilities:
  * - Single source of truth: Export captures the exact live card element
  * - Standard physical CR80 dimensions: 53.98 mm × 85.60 mm (Strict Vertical Portrait Only)
- * - Exact 300 DPI PNG Resolution: 638 × 1011 pixels (aspect ratio ~0.6306)
- * - Exact CR80 Physical PDF Export (53.98 mm × 85.60 mm) at 300 DPI print quality
+ * - Ultra-Sharp 600 DPI PNG Resolution: 1275 × 2022 pixels (aspect ratio ~0.6306)
+ * - Print-Ready CR80 Physical PDF Export (53.98 mm × 85.60 mm) at 600 DPI print quality
  * - Deterministic font/image pre-decoding and skipFonts to eliminate CSS-parsing drops
- * - Resilient dual-engine capture (html-to-image + html2canvas fallback)
+ * - Resilient dual-engine capture (html-to-image + html2canvas fallback) with pixel-exact normalization
  */
 
 import { jsPDF } from 'jspdf'
@@ -19,6 +19,9 @@ export interface CardExportConfig {
   employeeCode: string
   employeeName: string
 }
+
+export const CR80_600DPI_WIDTH = 1275
+export const CR80_600DPI_HEIGHT = 2022
 
 /**
  * Convert any image URL (remote, relative, or blob) to an inlined Base64 data URL
@@ -65,13 +68,52 @@ export async function urlToBase64(url: string | null | undefined): Promise<strin
 }
 
 /**
- * Capture card DOM element with exact 300 DPI CR80 dimensions (638 × 1011 px)
+ * Normalize and guarantee exact target pixel resolution (1275 × 2022 px for 600 DPI)
+ * using high-quality bicubic smoothing
+ */
+export async function normalizeCanvasResolution(
+  dataUrl: string,
+  targetWidth: number = CR80_600DPI_WIDTH,
+  targetHeight: number = CR80_600DPI_HEIGHT
+): Promise<string> {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      resolve(dataUrl)
+      return
+    }
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => {
+      if (img.width === targetWidth && img.height === targetHeight) {
+        resolve(dataUrl)
+        return
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = targetWidth
+      canvas.height = targetHeight
+      const ctx = canvas.getContext('2d')
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight)
+        resolve(canvas.toDataURL('image/png', 1.0))
+      } else {
+        resolve(dataUrl)
+      }
+    }
+    img.onerror = () => resolve(dataUrl)
+    img.src = dataUrl
+  })
+}
+
+/**
+ * Capture card DOM element with ultra-sharp 600 DPI CR80 dimensions (1275 × 2022 px)
  * Pre-decodes images, awaits document fonts, and uses explicit viewport bounds
  */
 export async function captureHighResCard(
   elementId: string,
-  targetWidth: number = 638,
-  targetHeight: number = 1011
+  targetWidth: number = CR80_600DPI_WIDTH,
+  targetHeight: number = CR80_600DPI_HEIGHT
 ): Promise<string> {
   const node = document.getElementById(elementId)
   if (!node) {
@@ -102,11 +144,13 @@ export async function captureHighResCard(
   )
 
   // Give browser a frame to commit any pending raster operations
-  await new Promise(r => setTimeout(r, 80))
+  await new Promise(r => setTimeout(r, 100))
 
   // Determine canonical solid background color based on selected design
   const isCorporateElite = elementId.includes('corporate-elite')
   const cardSolidBg = isCorporateElite ? '#4A55B6' : '#FFFFFF'
+
+  let rawDataUrl: string | null = null
 
   // 3. Primary capture: html-to-image with skipFonts and empty fontEmbedCSS to prevent stylesheet errors
   try {
@@ -120,7 +164,7 @@ export async function captureHighResCard(
       quality: 1.0,
       skipFonts: true,
       fontEmbedCSS: '',
-      backgroundColor: 'transparent',
+      backgroundColor: cardSolidBg,
       filter: (domNode: HTMLElement) => {
         const tag = domNode?.tagName?.toUpperCase()
         if (tag === 'SCRIPT' || tag === 'LINK') return false
@@ -133,29 +177,37 @@ export async function captureHighResCard(
     })
 
     if (dataUrl && dataUrl.length > 1000) {
-      return dataUrl
+      rawDataUrl = dataUrl
     }
   } catch (err) {
     console.warn('[captureHighResCard] Primary html-to-image engine warning, using html2canvas:', err)
   }
 
   // 4. Fallback capture: html2canvas with explicit solid card background color
-  const html2canvas = (await import('html2canvas')).default
-  const canvas = await html2canvas(node, {
-    width: 380,
-    height: 602,
-    scale: targetWidth / 380,
-    useCORS: true,
-    allowTaint: true,
-    backgroundColor: cardSolidBg,
-    logging: false,
-  })
+  if (!rawDataUrl) {
+    const html2canvas = (await import('html2canvas')).default
+    const canvas = await html2canvas(node, {
+      width: 380,
+      height: 602,
+      scale: targetWidth / 380,
+      useCORS: true,
+      allowTaint: true,
+      backgroundColor: cardSolidBg,
+      logging: false,
+    })
+    rawDataUrl = canvas.toDataURL('image/png', 1.0)
+  }
 
-  return canvas.toDataURL('image/png', 1.0)
+  if (!rawDataUrl) {
+    throw new Error(`Failed to rasterize ID card element #${elementId}`)
+  }
+
+  // 5. Ensure exact target resolution (1275 × 2022 px) with high-quality smoothing
+  return await normalizeCanvasResolution(rawDataUrl, targetWidth, targetHeight)
 }
 
 /**
- * Generate 300 DPI Print-Ready CR80 Portrait PDF
+ * Generate 600 DPI Print-Ready CR80 Portrait PDF
  * Physical Standard CR80 Dimensions: 53.98 mm × 85.60 mm (Portrait Only)
  */
 export async function generateCR80PrintPdf(
@@ -172,14 +224,14 @@ export async function generateCR80PrintPdf(
   })
 
   // Embed card image spanning exact CR80 physical dimensions (0 margins)
-  doc.addImage(cardDataUrl, 'PNG', 0, 0, widthMm, heightMm, undefined, 'FAST')
+  doc.addImage(cardDataUrl, 'PNG', 0, 0, widthMm, heightMm, undefined, 'SLOW')
 
   return doc.output('datauristring')
 }
 
 /**
  * Generate High-Resolution Card PNG preserving exact physical aspect ratio
- * Design 01 & 02: Vertical Portrait (638 × 1011 px)
+ * Design 01 & 02: Vertical Portrait (1275 × 2022 px at 600 DPI)
  */
 export async function generateHighResPng(
   cardDataUrl: string
