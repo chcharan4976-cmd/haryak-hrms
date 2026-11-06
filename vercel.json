@@ -2,7 +2,8 @@
   "crons": [
     {
       "path": "/api/admin/employee-id-cards/cleanup",
-      "schedule": "0 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
+
