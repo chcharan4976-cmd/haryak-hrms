@@ -27,6 +27,7 @@ import {
 } from '@/components/ui/card'
 import { Progress } from '@/components/ui/progress'
 import { formatCurrency } from '@/lib/utils/format'
+import { safeParseResponse } from '@/lib/api-client'
 
 type DepartmentStat = {
   name: string
@@ -119,22 +120,27 @@ export default function DashboardPage() {
         return
       }
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<{
+        success: boolean
+        stats?: DashboardStats
+        error?: string
+      }>(response)
 
-      if (data.success && data.stats) {
+      if (parseResult.ok && parseResult.data?.success && parseResult.data.stats) {
+        const statsData = parseResult.data.stats
         setStats((previous) => ({
           ...previous,
-          ...data.stats,
-          departments: Array.isArray(data.stats.departments)
-            ? data.stats.departments
+          ...statsData,
+          departments: Array.isArray(statsData.departments)
+            ? statsData.departments
             : [],
-          recentActivity: Array.isArray(data.stats.recentActivity)
-            ? data.stats.recentActivity
+          recentActivity: Array.isArray(statsData.recentActivity)
+            ? statsData.recentActivity
             : [],
         }))
         setError(null)
       } else {
-        setError(data.error || 'Failed to load dashboard statistics.')
+        setError(parseResult.data?.error || parseResult.error || 'Failed to load dashboard statistics.')
       }
     } catch (err) {
       console.error('Error loading dashboard stats:', err)

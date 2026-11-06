@@ -48,7 +48,8 @@ export default function LoginPage() {
   const {
     register,
     handleSubmit,
-    reset,
+    setValue,
+    clearErrors,
     control,
     watch,
     formState: { errors },
@@ -84,16 +85,10 @@ export default function LoginPage() {
   }, [])
 
   const handleModeChange = (newMode: LoginMode) => {
-    if (isLoading) return
+    if (isLoading || newMode === loginMode) return
 
-    setShowPassword(false)
-
-    reset({
-      mode: newMode,
-      identifier: '',
-      password: '',
-      rememberMe: false,
-    })
+    setValue('mode', newMode, { shouldDirty: true, shouldValidate: false })
+    clearErrors()
   }
 
   const onSubmit = async (data: LoginInput) => {
@@ -431,31 +426,34 @@ export default function LoginPage() {
                   <User className="h-4 w-4" />
                 </div>
 
-                <Input
-                  id="identifier"
-                  autoComplete={
-                    loginMode === 'ADMIN'
-                      ? 'username'
-                      : 'username'
-                  }
-                  type={
-                    loginMode === 'ADMIN'
-                      ? 'email'
-                      : 'text'
-                  }
-                  placeholder={
-                    loginMode === 'ADMIN'
-                      ? 'haryak@admin.com'
-                      : 'e.g. HRK-001 or employee@haryak.com'
-                  }
-                  className="h-10 pl-10 text-xs"
-                  disabled={isLoading}
-                  {...register('identifier')}
-                  aria-invalid={
-                    errors.identifier
-                      ? 'true'
-                      : 'false'
-                  }
+                <Controller
+                  name="identifier"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      id="identifier"
+                      autoComplete="username"
+                      type={
+                        loginMode === 'ADMIN'
+                          ? 'email'
+                          : 'text'
+                      }
+                      placeholder={
+                        loginMode === 'ADMIN'
+                          ? 'haryak@admin.com'
+                          : 'e.g. HRK-001 or employee@haryak.com'
+                      }
+                      className="h-10 pl-10 text-xs"
+                      disabled={isLoading}
+                      {...field}
+                      value={field.value ?? ''}
+                      aria-invalid={
+                        errors.identifier
+                          ? 'true'
+                          : 'false'
+                      }
+                    />
+                  )}
                 />
               </div>
 
@@ -490,23 +488,30 @@ export default function LoginPage() {
                   <Lock className="h-4 w-4" />
                 </div>
 
-                <Input
-                  id="password"
-                  type={
-                    showPassword
-                      ? 'text'
-                      : 'password'
-                  }
-                  autoComplete="current-password"
-                  placeholder="Enter your password"
-                  className="h-10 pl-10 pr-10 text-xs"
-                  disabled={isLoading}
-                  {...register('password')}
-                  aria-invalid={
-                    errors.password
-                      ? 'true'
-                      : 'false'
-                  }
+                <Controller
+                  name="password"
+                  control={control}
+                  render={({ field }) => (
+                    <Input
+                      id="password"
+                      type={
+                        showPassword
+                          ? 'text'
+                          : 'password'
+                      }
+                      autoComplete="current-password"
+                      placeholder="Enter your password"
+                      className="h-10 pl-10 pr-10 text-xs"
+                      disabled={isLoading}
+                      {...field}
+                      value={field.value ?? ''}
+                      aria-invalid={
+                        errors.password
+                          ? 'true'
+                          : 'false'
+                      }
+                    />
+                  )}
                 />
 
                 <button

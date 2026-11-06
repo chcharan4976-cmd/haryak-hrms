@@ -31,6 +31,7 @@ import { DeleteEmployeeDialog } from '@/components/employee/delete-employee-dial
 import { EditEmployeeDialog } from '@/components/employee/edit-employee-dialog'
 import { RepairAuthDialog } from '@/components/employee/repair-auth-dialog'
 import { ResetPasswordDialog } from '@/components/employee/reset-password-dialog'
+import { safeParseResponse } from '@/lib/api-client'
 
 type Employee = {
   id: string
@@ -176,11 +177,9 @@ export default function EmployeeDetailPage() {
           cache: 'no-store',
           credentials: 'include',
         })
-        if (detailRes.ok) {
-          const detailData = await detailRes.json()
-          if (detailData.success && (detailData.employee || detailData.data)) {
-            resolvedRaw = detailData.employee || detailData.data
-          }
+        const detailResult = await safeParseResponse<any>(detailRes)
+        if (detailResult.ok && detailResult.data?.success && (detailResult.data.employee || detailResult.data.data)) {
+          resolvedRaw = detailResult.data.employee || detailResult.data.data
         }
       } catch (detailErr) {
         console.warn('Direct employee detail fetch failed, trying directory fallback:', detailErr)
@@ -191,16 +190,16 @@ export default function EmployeeDetailPage() {
           cache: 'no-store',
           credentials: 'include',
         })
-        const employeeResult = await employeeResponse.json()
+        const employeeResult = await safeParseResponse<any>(employeeResponse)
 
-        if (!employeeResponse.ok || employeeResult.success === false) {
-          throw new Error(employeeResult.error || 'Unable to load employee.')
+        if (!employeeResult.ok || !employeeResult.data || employeeResult.data.success === false) {
+          throw new Error(employeeResult.data?.error || employeeResult.error || 'Unable to load employee.')
         }
 
-        const employees = Array.isArray(employeeResult.employees)
-          ? employeeResult.employees
-          : Array.isArray(employeeResult.data)
-            ? employeeResult.data
+        const employees = Array.isArray(employeeResult.data.employees)
+          ? employeeResult.data.employees
+          : Array.isArray(employeeResult.data.data)
+            ? employeeResult.data.data
             : []
 
         resolvedRaw = employees.find(
@@ -217,11 +216,11 @@ export default function EmployeeDetailPage() {
           cache: 'no-store',
           credentials: 'include',
         })
-        if (compensationResponse.ok) {
-          const compensationResult = await compensationResponse.json()
+        const compensationResult = await safeParseResponse<any>(compensationResponse)
+        if (compensationResult.ok && compensationResult.data) {
           setCompensation(
-            compensationResult.compensation ??
-              compensationResult.effective ??
+            compensationResult.data.compensation ??
+              compensationResult.data.effective ??
               null
           )
         } else {

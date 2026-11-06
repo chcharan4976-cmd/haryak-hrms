@@ -145,11 +145,13 @@ export async function resolveRequestContext(): Promise<
     }
 
     // 2. Look up application user in public.users
-    let { data: appUser, error: userError } = await admin
+    let appUser: any = null
+    const { data: initialUser, error: userError } = await admin
       .from('users')
       .select('id, company_id, employee_id, email, full_name, is_active, must_change_password')
       .eq('id', activeAuthUserId)
       .maybeSingle()
+    appUser = initialUser
 
     if (userError) {
       console.error('[CompanyResolver] Error fetching application user:', userError.message)
@@ -498,7 +500,8 @@ export async function getCanonicalEmployeeProfile(
   const admin = createAdminClient()
   if (!admin) return null
 
-  let { data: emp, error } = await admin
+  let emp: any = null
+  const { data: initialEmp, error } = await admin
     .from('employees')
     .select(`
       *,
@@ -511,6 +514,7 @@ export async function getCanonicalEmployeeProfile(
     `)
     .eq('id', employeeId)
     .maybeSingle()
+  emp = initialEmp
 
   if (error || !emp) {
     if (error) {
@@ -625,7 +629,7 @@ export function isEmployeeOnly(context: ResolvedContext): boolean {
  * Checks if the user has administrative access.
  */
 export function isAdmin(context: ResolvedContext): boolean {
-  return hasRole(context, 'SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN')
+  return hasRole(context, 'SUPER_ADMIN', 'HR_ADMIN', 'PAYROLL_ADMIN', 'ADMINISTRATION')
 }
 
 /**

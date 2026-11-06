@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
+import { safeParseResponse } from '@/lib/api-client'
 import { useAuth } from '@/components/providers/auth-provider'
 
 interface Message {
@@ -71,9 +72,15 @@ export function HaryakAiWidget() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: promptToSend }),
       })
-      const data = await res.json()
+      const parseResult = await safeParseResponse<{
+        success: boolean
+        message: string
+        isDenied?: boolean
+        error?: string
+      }>(res)
 
-      if (data.success) {
+      if (parseResult.ok && parseResult.data?.success) {
+        const data = parseResult.data
         const botMsg: Message = {
           id: `bot_${Date.now()}`,
           sender: 'assistant',
@@ -86,7 +93,7 @@ export function HaryakAiWidget() {
         const errorMsg: Message = {
           id: `err_${Date.now()}`,
           sender: 'assistant',
-          text: data.error || 'I encountered an error processing your query.',
+          text: parseResult.data?.error || parseResult.error || 'I encountered an error processing your query.',
           isDenied: true,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         }

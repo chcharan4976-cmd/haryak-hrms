@@ -48,6 +48,7 @@ import {
 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
+import { safeParseResponse } from '@/lib/api-client'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -392,12 +393,13 @@ export function OrganizationChatWindow() {
             cache: 'no-store',
           }
         )
-        const data = await response.json()
+        const parseResult = await safeParseResponse<any>(response)
 
-        if (!response.ok || !data?.success) {
+        if (!parseResult.ok || !parseResult.data?.success) {
           return
         }
 
+        const data = parseResult.data
         const results = Array.isArray(data.results)
           ? (data.results as SafeDirectoryResult[])
           : []
@@ -536,15 +538,17 @@ export function OrganizationChatWindow() {
           }
         )
 
-        const data = await response.json()
+        const parseResult = await safeParseResponse<any>(response)
 
-        if (!response.ok || !data?.success) {
+        if (!parseResult.ok || !parseResult.data?.success) {
           throw new Error(
-            data?.error ||
+            parseResult.data?.error ||
+              parseResult.error ||
               'Unable to load organization conversations.'
           )
         }
 
+        const data = parseResult.data
         const nextConversations: ChatConversation[] =
           Array.isArray(data.conversations)
             ? data.conversations
@@ -623,7 +627,7 @@ export function OrganizationChatWindow() {
           }
         )
 
-        const data = await response.json()
+        const parseResult = await safeParseResponse<any>(response)
 
         if (
           response.status === 403
@@ -636,12 +640,15 @@ export function OrganizationChatWindow() {
           return
         }
 
-        if (!response.ok || !data?.success) {
+        if (!parseResult.ok || !parseResult.data?.success) {
           throw new Error(
-            data?.error ||
+            parseResult.data?.error ||
+              parseResult.error ||
               'Unable to load chat history.'
           )
         }
+
+        const data = parseResult.data
 
         setMessages(
           Array.isArray(data.messages)
@@ -913,18 +920,21 @@ export function OrganizationChatWindow() {
         }
       )
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<any>(response)
 
       if (
-        !response.ok ||
-        !data?.success ||
-        !data?.message
+        !parseResult.ok ||
+        !parseResult.data?.success ||
+        !parseResult.data?.message
       ) {
         throw new Error(
-          data?.error ||
+          parseResult.data?.error ||
+            parseResult.error ||
             'Failed to send message.'
         )
       }
+
+      const data = parseResult.data
 
       setMessages(previous => [
         ...previous,
@@ -984,7 +994,7 @@ export function OrganizationChatWindow() {
         }
       )
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<any>(response)
 
       if (
         requestId !== searchRequestRef.current
@@ -992,12 +1002,15 @@ export function OrganizationChatWindow() {
         return
       }
 
-      if (!response.ok || !data?.success) {
+      if (!parseResult.ok || !parseResult.data?.success) {
         throw new Error(
-          data?.error ||
+          parseResult.data?.error ||
+            parseResult.error ||
             'Unable to search the company directory.'
         )
       }
+
+      const data = parseResult.data
 
       setDirectoryResults(
         Array.isArray(data.results)
@@ -1049,18 +1062,21 @@ export function OrganizationChatWindow() {
         }
       )
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<any>(response)
 
       if (
-        !response.ok ||
-        !data?.success ||
-        !data?.conversation
+        !parseResult.ok ||
+        !parseResult.data?.success ||
+        !parseResult.data?.conversation
       ) {
         throw new Error(
-          data?.error ||
+          parseResult.data?.error ||
+            parseResult.error ||
             'Could not start conversation.'
         )
       }
+
+      const data = parseResult.data
 
       setIsSearchOpen(false)
       setSelectedConv(data.conversation)
@@ -1118,11 +1134,13 @@ export function OrganizationChatWindow() {
         }),
       })
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<any>(response)
 
-      if (!response.ok || !data?.success) {
-        throw new Error(data?.error || 'Unable to edit message.')
+      if (!parseResult.ok || !parseResult.data?.success) {
+        throw new Error(parseResult.data?.error || parseResult.error || 'Unable to edit message.')
       }
+
+      const data = parseResult.data
 
       setMessages(current =>
         current.map(item =>
@@ -1164,10 +1182,10 @@ export function OrganizationChatWindow() {
         }),
       })
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<any>(response)
 
-      if (!response.ok || !data?.success) {
-        throw new Error(data?.error || 'Unable to delete message.')
+      if (!parseResult.ok || !parseResult.data?.success) {
+        throw new Error(parseResult.data?.error || parseResult.error || 'Unable to delete message.')
       }
 
       setMessages(current =>
@@ -1215,10 +1233,10 @@ export function OrganizationChatWindow() {
         }),
       })
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<any>(response)
 
-      if (!response.ok || !data?.success) {
-        throw new Error(data?.error || 'Unable to rename conversation.')
+      if (!parseResult.ok || !parseResult.data?.success) {
+        throw new Error(parseResult.data?.error || parseResult.error || 'Unable to rename conversation.')
       }
 
       setConversations(current =>
@@ -1263,10 +1281,10 @@ export function OrganizationChatWindow() {
         }),
       })
 
-      const data = await response.json()
+      const parseResult = await safeParseResponse<any>(response)
 
-      if (!response.ok || !data?.success) {
-        throw new Error(data?.error || 'Unable to delete conversation.')
+      if (!parseResult.ok || !parseResult.data?.success) {
+        throw new Error(parseResult.data?.error || parseResult.error || 'Unable to delete conversation.')
       }
 
       setConversations(current =>

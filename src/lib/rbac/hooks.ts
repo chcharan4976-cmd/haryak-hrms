@@ -3,19 +3,10 @@
 import { useCallback, useMemo } from 'react';
 import { hasPermission as checkPermission, canAccessModule } from './permissions';
 import { ROLES } from '../constants';
-// TODO: Replace with actual auth context import when ready
-// import { useAuth } from '@/components/auth/auth-provider';
-
-// Mock hook until auth context is ready
-function useAuth() {
-  return {
-    user: { id: 'mock', email: 'mock@haryak.com' },
-    roles: [ROLES.EMPLOYEE], // default fallback
-  };
-}
+import { useAuth } from '@/components/providers/auth-provider';
 
 export function usePermissions() {
-  const { roles: userRoles } = useAuth();
+  const { userRoles } = useAuth();
 
   const hasPermission = useCallback(
     (module: string, action: string) => {

@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/public/test-employee-photo.jpg
+/storage/verification/
+/storage/temporary-id-cards/
+/haryak-id-card-source-audit.zip

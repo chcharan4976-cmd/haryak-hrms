@@ -30,6 +30,7 @@ import {
   ChevronLeft,
   ChevronRight,
   MessageSquare,
+  CreditCard,
   X
 } from 'lucide-react'
 
@@ -66,6 +67,7 @@ const navSections = [
       { name: 'Organization Chat', href: '/messages', icon: MessageSquare },
       { name: 'Compensation', href: '/compensation', icon: IndianRupee },
       { name: 'Documents', href: '/documents', icon: FolderOpen },
+      { name: 'Employee ID Card Studio', href: '/admin/employee-id-cards', icon: CreditCard },
       { name: 'Reports', href: '/reports', icon: BarChart3 },
       { name: 'Announcements', href: '/announcements', icon: Megaphone },
       { name: 'Approvals', href: '/approvals', icon: CheckSquare },

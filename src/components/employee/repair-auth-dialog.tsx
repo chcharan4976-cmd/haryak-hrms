@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Loader2, CheckCircle2, AlertTriangle, Key, Copy, Check, Wrench, Eye, EyeOff } from 'lucide-react'
 import { toast } from 'sonner'
+import { safeParseResponse } from '@/lib/api-client'
 
 interface RepairAuthDialogProps {
   open: boolean
@@ -51,11 +52,11 @@ export function RepairAuthDialog({
     setLoading(true)
     try {
       const res = await fetch(`/api/employees/${employeeId}/identity-integrity`)
-      const data = await res.json()
-      if (data.success) {
-        setIntegrity(data.integrity)
+      const parseResult = await safeParseResponse<any>(res)
+      if (parseResult.ok && parseResult.data?.success) {
+        setIntegrity(parseResult.data.integrity)
       } else {
-        toast.error(data.error || 'Failed to inspect employee identity')
+        toast.error(parseResult.data?.error || parseResult.error || 'Failed to inspect employee identity')
       }
     } catch {
       toast.error('Network error checking identity')
@@ -71,14 +72,14 @@ export function RepairAuthDialog({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       })
-      const data = await res.json()
-      if (data.success) {
-        setRepairResult(data.data)
+      const parseResult = await safeParseResponse<any>(res)
+      if (parseResult.ok && parseResult.data?.success) {
+        setRepairResult(parseResult.data.data)
         setShowPassword(true)
-        toast.success(data.message || 'Login account repaired successfully!')
+        toast.success(parseResult.data.message || 'Login account repaired successfully!')
         // Keep dialog open until administrator clicks Close
       } else {
-        toast.error(data.error || 'Repair failed')
+        toast.error(parseResult.data?.error || parseResult.error || 'Repair failed')
       }
     } catch {
       toast.error('Network error repairing login account')

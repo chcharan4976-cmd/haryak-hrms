@@ -19,6 +19,7 @@ import {
 import {
   toast,
 } from 'sonner'
+import { safeParseResponse } from '@/lib/api-client'
 
 import {
   Badge,
@@ -160,22 +161,24 @@ export function EmployeeBankDetailsCard({
               }
             )
 
-          const result =
-            await response.json()
+          const parseResult =
+            await safeParseResponse<any>(response)
 
           if (
-            !response.ok ||
-            result.success ===
+            !parseResult.ok ||
+            !parseResult.data ||
+            parseResult.data.success ===
               false
           ) {
             throw new Error(
-              result.error ||
+              parseResult.data?.error ||
+              parseResult.error ||
               'Unable to load bank details.'
             )
           }
 
           setAccount(
-            result.data ||
+            parseResult.data.data ||
             null
           )
         } catch (
@@ -366,22 +369,24 @@ export function EmployeeBankDetailsCard({
             }
           )
 
-        const result =
-          await response.json()
+        const parseResult =
+          await safeParseResponse<any>(response)
 
         if (
-          !response.ok ||
-          result.success ===
+          !parseResult.ok ||
+          !parseResult.data ||
+          parseResult.data.success ===
             false
         ) {
           throw new Error(
-            result.error ||
+            parseResult.data?.error ||
+              parseResult.error ||
               'Unable to save bank details.'
           )
         }
 
         setAccount(
-          result.data
+          parseResult.data.data
         )
 
         setDialogOpen(
@@ -395,7 +400,7 @@ export function EmployeeBankDetailsCard({
         )
 
         onBankAccountChanged?.(
-          result.data
+          parseResult.data.data
         )
       } catch (
         error: any

@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
+import { safeParseResponse } from '@/lib/api-client'
 import { toast } from 'sonner'
 
 export interface NotificationItem {
@@ -81,11 +82,15 @@ export function NotificationBell({ portal = false }: NotificationBellProps) {
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await fetch('/api/notifications', { cache: 'no-store' })
-      if (!res.ok) return
-      const data = await res.json()
-      if (data.success && Array.isArray(data.notifications)) {
-        setNotifications(data.notifications)
-        setUnreadCount(typeof data.unreadCount === 'number' ? data.unreadCount : 0)
+      const parseResult = await safeParseResponse<{
+        success: boolean
+        notifications?: NotificationItem[]
+        unreadCount?: number
+      }>(res)
+
+      if (parseResult.ok && parseResult.data?.success && Array.isArray(parseResult.data.notifications)) {
+        setNotifications(parseResult.data.notifications)
+        setUnreadCount(typeof parseResult.data.unreadCount === 'number' ? parseResult.data.unreadCount : 0)
       }
     } catch {
       // Background poll failure handled silently
@@ -178,9 +183,11 @@ export function NotificationBell({ portal = false }: NotificationBellProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ all: true }),
       })
-      const data = await res.json()
-      if (data.success) {
+      const parseResult = await safeParseResponse<{ success: boolean; message?: string }>(res)
+      if (parseResult.ok && parseResult.data?.success) {
         toast.success('All notifications marked as read')
+      } else {
+        toast.error(parseResult.data?.message || parseResult.error || 'Failed to mark all as read')
       }
     } catch {
       toast.error('Failed to mark all as read')

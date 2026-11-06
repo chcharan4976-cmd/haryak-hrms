@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { BellRing, MessageCircleMore, Volume2, X } from 'lucide-react'
 import { usePathname, useRouter } from 'next/navigation'
-
+import { safeParseResponse } from '@/lib/api-client'
 import { useAuth } from '@/components/providers/auth-provider'
 
 interface ConversationSummary {
@@ -476,34 +476,22 @@ export function ChatNotificationListener() {
           return
         }
 
-        const contentType =
-          response.headers.get(
-            'content-type'
-          ) || ''
-
-        /*
-         * Avoid calling response.json()
-         * against an HTML/error response.
-         */
-        if (
-          !contentType.includes(
-            'application/json'
-          )
-        ) {
-          return
-        }
-
-        const data =
-          await response.json()
+        const parseResult = await safeParseResponse<{
+          success: boolean
+          conversations?: ConversationSummary[]
+        }>(response)
 
         if (
-          !data?.success ||
+          !parseResult.ok ||
+          !parseResult.data?.success ||
           !Array.isArray(
-            data.conversations
+            parseResult.data.conversations
           )
         ) {
           return
         }
+
+        const data = parseResult.data
 
         const conversations =
           data.conversations as ConversationSummary[]

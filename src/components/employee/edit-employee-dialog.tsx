@@ -17,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Loader2, Lock, AlertTriangle, UserCheck } from 'lucide-react'
 import { toast } from 'sonner'
+import { safeParseResponse } from '@/lib/api-client'
 
 interface EditEmployeeDialogProps {
   open: boolean
@@ -108,16 +109,21 @@ export function EditEmployeeDialog({
         fetch('/api/designations'),
         fetch('/api/employees/directory?limit=100'),
       ])
-      if (deptRes.ok) {
-        const d = await deptRes.json()
+      const [deptParsed, desigParsed, mgrParsed] = await Promise.all([
+        safeParseResponse<any>(deptRes),
+        safeParseResponse<any>(desigRes),
+        safeParseResponse<any>(mgrRes),
+      ])
+      if (deptParsed.ok && deptParsed.data) {
+        const d = deptParsed.data
         setDepartments(d.data || d.departments || [])
       }
-      if (desigRes.ok) {
-        const d = await desigRes.json()
+      if (desigParsed.ok && desigParsed.data) {
+        const d = desigParsed.data
         setDesignations(d.data || d.designations || [])
       }
-      if (mgrRes.ok) {
-        const d = await mgrRes.json()
+      if (mgrParsed.ok && mgrParsed.data) {
+        const d = mgrParsed.data
         setManagers((d.employees || d.data || []).filter((e: any) => e.id !== employee.id))
       }
     } catch {
@@ -166,13 +172,13 @@ export function EditEmployeeDialog({
         body: JSON.stringify(payload),
       })
 
-      const data = await res.json()
-      if (data.success) {
+      const parseResult = await safeParseResponse<any>(res)
+      if (parseResult.ok && parseResult.data?.success) {
         toast.success('Employee updated successfully!')
         onSaved?.()
         onOpenChange(false)
       } else {
-        toast.error(data.error || 'Failed to update employee')
+        toast.error(parseResult.data?.error || parseResult.error || 'Failed to update employee')
       }
     } catch {
       toast.error('Network error updating employee')

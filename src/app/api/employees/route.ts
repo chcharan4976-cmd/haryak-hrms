@@ -5,22 +5,113 @@ import { generateTemporaryPassword } from '@/lib/auth/auth-service'
 import { createAuditLog } from '@/lib/services/audit-service'
 
 
+interface EmployeeCodeAllocation {
+  code: string
+  reservationId: string | null
+  renew: (additionalMinutes?: number) => Promise<boolean>
+  release: () => Promise<void> | void
+}
+
 async function getLowestAvailableEmployeeCode(
   supabase: any,
-  companyId: string
-): Promise<string> {
-  // If generate_employee_code RPC is available, try it first
+  companyId: string,
+  userId?: string
+): Promise<EmployeeCodeAllocation> {
+  // 1. Try atomic database-backed reservation RPC first
   if (supabase?.rpc) {
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc(
+        'reserve_next_employee_code',
+        {
+          p_company_id: companyId,
+          p_reservation_type: 'PERMANENT_EMPLOYEE',
+          p_user_id: userId || null,
+          p_ttl_minutes: 15,
+          p_is_service_role: true,
+        }
+      )
+      const row = Array.isArray(rpcRes) ? rpcRes[0] : rpcRes
+      if (!rpcErr && row?.employee_code) {
+        const resId = row.reservation_id || null
+        return {
+          code: row.employee_code,
+          reservationId: resId,
+          renew: async (additionalMinutes = 15) => {
+            if (resId && supabase?.rpc) {
+              try {
+                const { data: renewed, error: renewErr } = await supabase.rpc('renew_employee_code_reservation', {
+                  p_reservation_id: resId,
+                  p_company_id: companyId,
+                  p_user_id: userId || null,
+                  p_additional_minutes: additionalMinutes,
+                  p_is_service_role: true,
+                })
+                return !renewErr && renewed === true
+              } catch {
+                return false
+              }
+            }
+            return true
+          },
+          release: async () => {
+            if (resId && supabase?.rpc) {
+              try {
+                await supabase.rpc('release_employee_code_reservation', {
+                  p_reservation_id: resId,
+                  p_company_id: companyId,
+                  p_user_id: userId || null,
+                  p_is_service_role: true,
+                })
+              } catch {
+                // best-effort cleanup
+              }
+            }
+          },
+        }
+      }
+    } catch {
+      // Fall through to legacy allocate_next_employee_code
+    }
+
+    // Secondary fallback: allocate_next_employee_code
+    try {
+      const { data: rpcCode, error: rpcErr } = await supabase.rpc(
+        'allocate_next_employee_code',
+        { p_company_id: companyId, p_is_temporary: false, p_user_id: userId || null, p_is_service_role: true }
+      )
+      if (!rpcErr && rpcCode && typeof rpcCode === 'string') {
+        return {
+          code: rpcCode,
+          reservationId: null,
+          renew: async () => true,
+          release: () => {},
+        }
+      }
+    } catch {
+      // Fall through
+    }
+
+    // Legacy fallback RPC
     try {
       const { data: rpcCode, error: rpcErr } = await supabase.rpc(
         'generate_employee_code',
         { p_company_id: companyId }
       )
-      if (!rpcErr && rpcCode) {
-        return rpcCode
+      if (!rpcErr && rpcCode && typeof rpcCode === 'string') {
+        return {
+          code: rpcCode,
+          reservationId: null,
+          renew: async () => true,
+          release: () => {},
+        }
       }
     } catch {
-      // Fall through to lowest available calculation
+      // Fall through to environment check
+    }
+
+    // Fail closed in production: do NOT silently fall back to unmanaged in-memory allocation
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('Database-backed atomic employee code reservation is required in production but unavailable.')
     }
   }
 
@@ -34,14 +125,22 @@ async function getLowestAvailableEmployeeCode(
     .trim()
     .toUpperCase()
 
-  const { data: existing, error: employeeCodeError } = await supabase
-    .from('employees')
-    .select('employee_code')
-    .eq('company_id', companyId)
+  // Inspect BOTH employees AND temporary_employee_id_cards
+  const [empRes, tempRes] = await Promise.all([
+    supabase
+      .from('employees')
+      .select('employee_code')
+      .eq('company_id', companyId),
+    supabase
+      .from('temporary_employee_id_cards')
+      .select('employee_code')
+      .eq('company_id', companyId)
+      .is('deleted_at', null),
+  ])
 
-  if (employeeCodeError) {
+  if (empRes.error) {
     throw new Error(
-      `Unable to inspect existing employee IDs: ${employeeCodeError.message}`
+      `Unable to inspect existing employee IDs: ${empRes.error.message}`
     )
   }
 
@@ -52,7 +151,17 @@ async function getLowestAvailableEmployeeCode(
 
   const usedNumbers = new Set<number>()
 
-  for (const row of existing || []) {
+  for (const row of empRes.data || []) {
+    const match = String(row.employee_code || '').match(pattern)
+    if (!match) continue
+
+    const value = Number(match[1])
+    if (Number.isInteger(value) && value > 0) {
+      usedNumbers.add(value)
+    }
+  }
+
+  for (const row of tempRes.data || []) {
     const match = String(row.employee_code || '').match(pattern)
     if (!match) continue
 
@@ -68,7 +177,13 @@ async function getLowestAvailableEmployeeCode(
     nextNumber += 1
   }
 
-  return `${prefix}-${String(nextNumber).padStart(3, '0')}`
+  const allocatedCode = `${prefix}-${String(nextNumber).padStart(3, '0')}`
+  return {
+    code: allocatedCode,
+    reservationId: null,
+    renew: async () => true,
+    release: () => {},
+  }
 }
 
 function isEmployeeCodeConflict(error: any): boolean {
@@ -132,12 +247,14 @@ export async function GET(request: Request) {
         full_name,
         official_email,
         phone,
+        profile_image_url,
         employment_status,
         employment_type,
         joining_date,
         is_active,
         departments:department_id(id, name),
-        designations:designation_id(id, name)
+        designations:designation_id(id, name),
+        locations:location_id(id, name)
       `)
       .eq('company_id', companyId)
       .order('employee_code', { ascending: true })
@@ -169,6 +286,10 @@ export async function GET(request: Request) {
       phone: e.phone || '-',
       department: e.departments?.name || 'Unassigned',
       designation: e.designations?.name || 'Unassigned',
+      location: e.locations?.name || 'Headquarters',
+      workLocation: e.locations?.name || 'Headquarters',
+      profileImageUrl: e.profile_image_url || null,
+      profile_image_url: e.profile_image_url || null,
       status: e.employment_status || (e.is_active ? 'active' : 'inactive'),
       employmentStatus: e.employment_status || (e.is_active ? 'active' : 'inactive'),
       employment_status: e.employment_status || (e.is_active ? 'active' : 'inactive'),
@@ -198,10 +319,79 @@ export async function GET(request: Request) {
   }
 }
 
+interface ReservationLeaseHeartbeat {
+  checkAndRenew: () => Promise<boolean>
+  stop: () => void
+  isAborted: () => boolean
+}
+
+function startReservationHeartbeat(options: {
+  renewFn: (additionalMins?: number) => Promise<boolean>
+  intervalMs?: number
+  maxDurationMs?: number
+  onHeartbeatFailure?: (err: Error) => void
+}): ReservationLeaseHeartbeat {
+  let isStopped = false
+  let isFailed = false
+  const startTime = Date.now()
+  const intervalMs = options.intervalMs || 30 * 1000
+  const maxDurationMs = options.maxDurationMs || 14 * 60 * 1000
+
+  const checkAndRenew = async (): Promise<boolean> => {
+    if (isStopped) return true
+    if (isFailed) return false
+    if (Date.now() - startTime > maxDurationMs) {
+      isFailed = true
+      options.onHeartbeatFailure?.(new Error('Maximum reservation processing duration exceeded.'))
+      return false
+    }
+    const success = await options.renewFn(15)
+    if (!success) {
+      isFailed = true
+      options.onHeartbeatFailure?.(new Error('Reservation lease renewal failed; lease lost or reclaimed.'))
+      return false
+    }
+    return true
+  }
+
+  const timer = setInterval(async () => {
+    if (isStopped || isFailed) {
+      clearInterval(timer)
+      return
+    }
+    try {
+      await checkAndRenew()
+    } catch (err: any) {
+      isFailed = true
+      clearInterval(timer)
+      options.onHeartbeatFailure?.(err)
+    }
+  }, intervalMs)
+
+  if (timer.unref) {
+    timer.unref()
+  }
+
+  return {
+    checkAndRenew,
+    stop: () => {
+      isStopped = true
+      clearInterval(timer)
+    },
+    isAborted: () => isFailed || (Date.now() - startTime > maxDurationMs),
+  }
+}
+
 export async function POST(request: Request) {
   let authUserId = ''
   let isExistingAuthUser = false
   let employeeTableId = ''
+  let activeReservationId: string | null = null
+  let codeRenewFn: ((mins?: number) => Promise<boolean>) | null = null
+  let codeReleaseFn: (() => Promise<void> | void) | null = null
+  let isCommitted = false
+  let activeTempCard: any = null
+  let heartbeat: ReservationLeaseHeartbeat | null = null
   let supabase: any = null
 
   try {
@@ -244,6 +434,7 @@ export async function POST(request: Request) {
       ptState,
       esiApplicable,
       pan,
+      temporaryCardId,
       // Bank details (optional)
       bankName,
       accountNumber,
@@ -352,10 +543,74 @@ export async function POST(request: Request) {
     // the final concurrency guard. STEP 6 retries if another admin
     // wins the same gap between lookup and insert.
     // ============================================================
-    let newEmployeeCode = await getLowestAvailableEmployeeCode(
-      supabase,
-      companyId
-    )
+    // Check if converting from an existing temporary ID card
+    if (temporaryCardId && typeof temporaryCardId === 'string') {
+      const { data: tempCard, error: tempCardErr } = await supabase
+        .from('temporary_employee_id_cards')
+        .select('id, employee_code, company_id, employee_id, deleted_at')
+        .eq('id', temporaryCardId)
+        .eq('company_id', companyId)
+        .is('deleted_at', null)
+        .maybeSingle()
+
+      if (tempCardErr || !tempCard) {
+        return NextResponse.json(
+          { success: false, error: 'Temporary ID card not found, already deleted, or belongs to another company.' },
+          { status: 400 }
+        )
+      }
+
+      // Check if this temporary card has ALREADY been converted to an employee
+      if (tempCard.employee_id) {
+        const { data: linkedEmp } = await supabase
+          .from('employees')
+          .select('id, employee_code, official_email, full_name')
+          .eq('id', tempCard.employee_id)
+          .eq('company_id', companyId)
+          .maybeSingle()
+
+        if (linkedEmp && linkedEmp.official_email?.toLowerCase() === cleanEmail) {
+          // Idempotent retry: Return existing employee details without creating duplicates
+          return NextResponse.json({
+            success: true,
+            message: 'Temporary ID card has already been converted to this employee.',
+            employee: {
+              id: linkedEmp.id,
+              code: linkedEmp.employee_code,
+              name: linkedEmp.full_name,
+              email: linkedEmp.official_email,
+              portalUrl: '/login',
+            },
+          })
+        }
+
+        return NextResponse.json(
+          { success: false, error: 'This temporary ID card has already been converted to an existing employee.' },
+          { status: 409 }
+        )
+      }
+
+      activeTempCard = tempCard
+    }
+
+    let newEmployeeCode = ''
+    if (activeTempCard) {
+      newEmployeeCode = activeTempCard.employee_code
+    } else {
+      const alloc = await getLowestAvailableEmployeeCode(supabase, companyId, creatorId)
+      newEmployeeCode = alloc.code
+      activeReservationId = alloc.reservationId
+      codeRenewFn = alloc.renew
+      codeReleaseFn = alloc.release
+
+      if (activeReservationId && codeRenewFn) {
+        heartbeat = startReservationHeartbeat({
+          renewFn: codeRenewFn,
+          intervalMs: 30 * 1000,
+          maxDurationMs: 14 * 60 * 1000,
+        })
+      }
+    }
 
     // ============================================================
     // STEP 2: Create or locate Supabase Auth User
@@ -373,6 +628,11 @@ export async function POST(request: Request) {
       .maybeSingle()
 
     if (existingEmailEmp) {
+      if (codeReleaseFn) {
+        try {
+          await codeReleaseFn()
+        } catch {}
+      }
       return NextResponse.json(
         { success: false, error: `An employee with email ${cleanEmail} already exists (${existingEmailEmp.employee_code}).` },
         { status: 400 }
@@ -412,6 +672,11 @@ export async function POST(request: Request) {
             .maybeSingle()
 
           if (linkedEmp) {
+            if (codeReleaseFn) {
+              try {
+                await codeReleaseFn()
+              } catch {}
+            }
             return NextResponse.json(
               {
                 success: false,
@@ -435,6 +700,11 @@ export async function POST(request: Request) {
             },
           })
         } else {
+          if (codeReleaseFn) {
+            try {
+              await codeReleaseFn()
+            } catch {}
+          }
           return NextResponse.json(
             {
               success: false,
@@ -444,6 +714,11 @@ export async function POST(request: Request) {
           )
         }
       } else {
+        if (codeReleaseFn) {
+          try {
+            await codeReleaseFn()
+          } catch {}
+        }
         return NextResponse.json(
           { success: false, error: `Authentication user creation failed: ${authError.message}` },
           { status: 400 }
@@ -532,84 +807,280 @@ export async function POST(request: Request) {
     }
 
     // ============================================================
-    // STEP 6: Insert employee record
+    // STEP 6: Insert employee record (Atomic RPC for temp card conversion, or managed reservation)
     // ============================================================
-    let insertedEmp: any = null
-    let empInsertErr: any = null
-
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const insertResult = await supabase
-        .from('employees')
-        .insert({
-          company_id: companyId,
-          user_id: authUserId,
-          employee_code: newEmployeeCode,
-          first_name: firstName.trim(),
-          last_name: lastName?.trim() || '',
-          full_name: fullName,
-          official_email: cleanEmail,
-          phone: phone?.trim() || null,
-          gender: gender?.toLowerCase() || null,
-          date_of_birth: dob || null,
-          department_id: deptId,
-          designation_id: desigId,
-          joining_date: joiningDate,
-          employment_type: employmentType,
-          employment_status: 'active',
-          is_active: true,
-          created_by: creatorId,
-        })
-        .select('id')
-        .single()
-
-      insertedEmp = insertResult.data
-      empInsertErr = insertResult.error
-
-      if (!empInsertErr && insertedEmp) {
-        break
-      }
-
-      if (isEmployeeCodeConflict(empInsertErr)) {
-        newEmployeeCode = await getLowestAvailableEmployeeCode(
-          supabase,
-          companyId
-        )
-        continue
-      }
-
-      break
-    }
-
-    if (empInsertErr || !insertedEmp) {
-      console.error(
-        'FATAL: Employee table insert failed:',
-        empInsertErr?.message || 'Unknown insert error'
-      )
-
-      if (!isExistingAuthUser && authUserId) {
+    if (activeTempCard) {
+      let conversionSucceeded = false
+      if (supabase?.rpc) {
         try {
-          await supabase.from('user_roles').delete().eq('user_id', authUserId)
-          await supabase.from('users').delete().eq('id', authUserId)
-          await supabase.auth.admin.deleteUser(authUserId)
-        } catch {
-          console.error('Cleanup failed after employee insert failure')
+          const { data: convData, error: convErr } = await supabase.rpc(
+            'convert_temporary_card_to_permanent_employee',
+            {
+              p_company_id: companyId,
+              p_temporary_card_id: activeTempCard.id,
+              p_auth_user_id: authUserId,
+              p_creator_id: creatorId || null,
+              p_employee_data: {
+                first_name: firstName.trim(),
+                last_name: lastName?.trim() || '',
+                full_name: fullName,
+                official_email: cleanEmail,
+                phone: phone?.trim() || null,
+                gender: gender?.toLowerCase() || null,
+                date_of_birth: dob || null,
+                department_id: deptId,
+                designation_id: desigId,
+                joining_date: joiningDate,
+                employment_type: employmentType,
+              },
+              p_is_service_role: true,
+            }
+          )
+
+          if (convErr) {
+            const errMsg = String(convErr.message || '').toLowerCase()
+            if (
+              errMsg.includes('could not find the function') ||
+              errMsg.includes('does not exist') ||
+              convErr.code === '42883'
+            ) {
+              conversionSucceeded = false
+            } else {
+              throw new Error(`Failed to atomically convert temporary ID card: ${convErr.message}`)
+            }
+          } else if (convData) {
+            employeeTableId = convData.employee_id
+            isCommitted = true
+            conversionSucceeded = true
+          }
+        } catch (rpcErr: any) {
+          const errMsg = String(rpcErr.message || '').toLowerCase()
+          if (
+            errMsg.includes('could not find the function') ||
+            errMsg.includes('does not exist') ||
+            rpcErr.code === '42883'
+          ) {
+            conversionSucceeded = false
+          } else {
+            throw rpcErr
+          }
         }
       }
 
-      return NextResponse.json(
-        {
-          success: false,
-          error:
-            `Employee record creation failed: ${
-              empInsertErr?.message ||
-              'Could not reserve an employee ID after multiple attempts.'
-            }`,
-        },
-        { status: isEmployeeCodeConflict(empInsertErr) ? 409 : 500 }
-      )
-    }
+      if (!conversionSucceeded) {
+        // Production must fail closed when the atomic conversion RPC is unavailable.
+        // Never use individual statements as a production substitute for transactional conversion.
+        if (process.env.NODE_ENV !== 'test') {
+          throw new Error('Database-backed atomic conversion RPC (convert_temporary_card_to_permanent_employee) is required in production but unavailable. Aborting conversion to prevent non-atomic partial data corruption.')
+        }
 
-    employeeTableId = insertedEmp.id
+        // Isolated compatibility fallback strictly restricted to test environments:
+        const insertResult = await supabase
+          .from('employees')
+          .insert({
+            company_id: companyId,
+            user_id: authUserId,
+            employee_code: newEmployeeCode,
+            first_name: firstName.trim(),
+            last_name: lastName?.trim() || '',
+            full_name: fullName,
+            official_email: cleanEmail,
+            phone: phone?.trim() || null,
+            gender: gender?.toLowerCase() || null,
+            date_of_birth: dob || null,
+            department_id: deptId,
+            designation_id: desigId,
+            joining_date: joiningDate,
+            employment_type: employmentType,
+            employment_status: 'active',
+            is_active: true,
+            created_by: creatorId,
+          })
+          .select('id')
+          .single()
+
+        if (insertResult.error || !insertResult.data) {
+          throw new Error(`Employee record creation failed: ${insertResult.error?.message || 'Insert failed'}`)
+        }
+
+        employeeTableId = insertResult.data.id
+
+        await supabase
+          .from('users')
+          .update({ employee_id: employeeTableId })
+          .eq('id', authUserId)
+
+        if (supabase?.rpc) {
+          const { error: legacyConvErr } = await supabase.rpc('convert_temporary_card_to_employee', {
+            p_company_id: companyId,
+            p_temporary_card_id: activeTempCard.id,
+            p_employee_id: employeeTableId,
+            p_user_id: creatorId || null,
+            p_is_service_role: true,
+          })
+          if (legacyConvErr) {
+            throw new Error(`Failed to link temporary card: ${legacyConvErr.message}`)
+          }
+        } else {
+          await supabase
+            .from('temporary_employee_id_cards')
+            .update({ employee_id: employeeTableId })
+            .eq('id', activeTempCard.id)
+            .eq('company_id', companyId)
+        }
+        isCommitted = true
+      }
+    } else {
+      // Standard permanent employee onboarding with reservation lease protection
+      let insertedEmp: any = null
+      let empInsertErr: any = null
+
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        // Lease renewal checkpoint check if we hold an active reservation
+        if (heartbeat) {
+          const renewed = await heartbeat.checkAndRenew()
+          if (!renewed || heartbeat.isAborted()) {
+            if (codeReleaseFn) {
+              await codeReleaseFn()
+            }
+            heartbeat.stop()
+            const freshAlloc = await getLowestAvailableEmployeeCode(supabase, companyId, creatorId)
+            newEmployeeCode = freshAlloc.code
+            activeReservationId = freshAlloc.reservationId
+            codeRenewFn = freshAlloc.renew
+            codeReleaseFn = freshAlloc.release
+            if (activeReservationId && codeRenewFn) {
+              heartbeat = startReservationHeartbeat({
+                renewFn: codeRenewFn,
+                intervalMs: 30 * 1000,
+                maxDurationMs: 14 * 60 * 1000,
+              })
+            }
+          }
+        }
+
+        const insertResult = await supabase
+          .from('employees')
+          .insert({
+            company_id: companyId,
+            user_id: authUserId,
+            employee_code: newEmployeeCode,
+            first_name: firstName.trim(),
+            last_name: lastName?.trim() || '',
+            full_name: fullName,
+            official_email: cleanEmail,
+            phone: phone?.trim() || null,
+            gender: gender?.toLowerCase() || null,
+            date_of_birth: dob || null,
+            department_id: deptId,
+            designation_id: desigId,
+            joining_date: joiningDate,
+            employment_type: employmentType,
+            employment_status: 'active',
+            is_active: true,
+            created_by: creatorId,
+          })
+          .select('id')
+          .single()
+
+        insertedEmp = insertResult.data
+        empInsertErr = insertResult.error
+
+        if (!empInsertErr && insertedEmp) {
+          break
+        }
+
+        if (isEmployeeCodeConflict(empInsertErr)) {
+          if (codeReleaseFn) {
+            await codeReleaseFn()
+          }
+          if (heartbeat) {
+            heartbeat.stop()
+          }
+          const freshAlloc = await getLowestAvailableEmployeeCode(
+            supabase,
+            companyId,
+            creatorId
+          )
+          newEmployeeCode = freshAlloc.code
+          activeReservationId = freshAlloc.reservationId
+          codeRenewFn = freshAlloc.renew
+          codeReleaseFn = freshAlloc.release
+          if (activeReservationId && codeRenewFn) {
+            heartbeat = startReservationHeartbeat({
+              renewFn: codeRenewFn,
+              intervalMs: 30 * 1000,
+              maxDurationMs: 14 * 60 * 1000,
+            })
+          }
+          continue
+        }
+
+        break
+      }
+
+      if (empInsertErr || !insertedEmp) {
+        console.error(
+          'FATAL: Employee table insert failed:',
+          empInsertErr?.message || 'Unknown insert error'
+        )
+
+        if (codeReleaseFn) {
+          try {
+            await codeReleaseFn()
+          } catch {
+            // best-effort release
+          }
+        }
+
+        if (!isExistingAuthUser && authUserId) {
+          try {
+            await supabase.from('user_roles').delete().eq('user_id', authUserId)
+            await supabase.from('users').delete().eq('id', authUserId)
+            await supabase.auth.admin.deleteUser(authUserId)
+          } catch {
+            console.error('Cleanup failed after employee insert failure')
+          }
+        }
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `Employee record creation failed: ${
+                empInsertErr?.message ||
+                'Could not reserve an employee ID after multiple attempts.'
+              }`,
+          },
+          { status: isEmployeeCodeConflict(empInsertErr) ? 409 : 500 }
+        )
+      }
+
+      employeeTableId = insertedEmp.id
+
+      // Link employee_id back to users table
+      await supabase
+        .from('users')
+        .update({ employee_id: employeeTableId })
+        .eq('id', authUserId)
+
+      if (activeReservationId && supabase?.rpc) {
+        const { data: committed, error: commitErr } = await supabase.rpc('commit_employee_code_reservation', {
+          p_reservation_id: activeReservationId,
+          p_company_id: companyId,
+          p_user_id: creatorId || null,
+          p_employee_id: employeeTableId,
+          p_is_service_role: true,
+        })
+
+        if (commitErr || committed !== true) {
+          throw new Error('Employee code reservation lease expired or was reclaimed before insert could be committed.')
+        }
+        isCommitted = true
+      } else {
+        isCommitted = true
+      }
+    }
 
     // Ensure Auth metadata reflects the FINAL code after any retry.
     try {
@@ -633,12 +1104,6 @@ export async function POST(request: Request) {
         metadataError
       )
     }
-
-    // Link employee_id back to users table
-    await supabase
-      .from('users')
-      .update({ employee_id: employeeTableId })
-      .eq('id', authUserId)
 
     // ============================================================
     // STEP 7: Create salary structure (only if CTC provided)
@@ -787,12 +1252,24 @@ export async function POST(request: Request) {
       },
     })
   } catch (error: any) {
-    console.error('Error creating employee:', error)
+    console.error('Error creating employee:', error?.message || 'Unknown error')
+
+    if (!isCommitted && codeReleaseFn) {
+      try {
+        await codeReleaseFn()
+      } catch (relErr: any) {
+        console.error('Failed to release reservation during error rollback:', relErr?.message || 'Unknown error')
+      }
+    }
 
     // Compensating cleanup to guarantee no orphan records remain
     if (employeeTableId && supabase) {
       try {
         await supabase.from('users').update({ employee_id: null }).eq('employee_id', employeeTableId)
+
+        if (activeTempCard) {
+          await supabase.from('temporary_employee_id_cards').update({ employee_id: null }).eq('employee_id', employeeTableId)
+        }
 
         const { data: cleanupStructures } = await supabase
           .from('salary_structures')
@@ -812,8 +1289,8 @@ export async function POST(request: Request) {
         await supabase.from('employee_bank_accounts').delete().eq('employee_id', employeeTableId)
         await supabase.from('employee_statutory_details').delete().eq('employee_id', employeeTableId)
         await supabase.from('employees').delete().eq('id', employeeTableId)
-      } catch (cleanupErr) {
-        console.error('Compensating employee cleanup failed:', cleanupErr)
+      } catch (cleanupErr: any) {
+        console.error('Compensating employee cleanup failed:', cleanupErr?.message || 'Unknown error')
       }
     }
     if (!isExistingAuthUser && authUserId && supabase) {
@@ -821,15 +1298,25 @@ export async function POST(request: Request) {
         await supabase.auth.admin.deleteUser(authUserId)
         await supabase.from('user_roles').delete().eq('user_id', authUserId)
         await supabase.from('users').delete().eq('id', authUserId)
-      } catch (authCleanupErr) {
-        console.error('Compensating auth user cleanup failed:', authCleanupErr)
+      } catch (authCleanupErr: any) {
+        console.error('Compensating auth user cleanup failed:', authCleanupErr?.message || 'Unknown error')
       }
     }
 
+    const isConflict =
+      isEmployeeCodeConflict(error) ||
+      String(error.message || '').includes('lease expired') ||
+      String(error.message || '').includes('reclaimed') ||
+      String(error.message || '').includes('already been converted')
+
     return NextResponse.json(
       { success: false, error: error.message || 'An unexpected error occurred during employee creation.' },
-      { status: 500 }
+      { status: isConflict ? 409 : 500 }
     )
+  } finally {
+    if (heartbeat) {
+      heartbeat.stop()
+    }
   }
 }
 

@@ -8,6 +8,7 @@ import {
   Edit, KeyRound, Wrench, IndianRupee, Clock, UserX
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { safeParseResponse } from '@/lib/api-client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -79,9 +80,13 @@ export default function EmployeesPage() {
         cache: 'no-store',
         credentials: 'include',
       })
-      const data = await res.json()
-      if (data.success && Array.isArray(data.employees)) {
-        setEmployees(data.employees)
+      const parseResult = await safeParseResponse<{
+        success: boolean
+        employees?: EmployeeRow[]
+      }>(res)
+
+      if (parseResult.ok && parseResult.data?.success && Array.isArray(parseResult.data.employees)) {
+        setEmployees(parseResult.data.employees)
       } else {
         setEmployees([])
       }

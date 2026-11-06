@@ -23,6 +23,7 @@ import {
   UserX,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { safeParseResponse } from '@/lib/api-client'
 
 interface DeleteEmployeeDialogProps {
   open: boolean
@@ -78,10 +79,10 @@ export function DeleteEmployeeDialog({
         `/api/employees/${employee.id}/delete-eligibility`,
       )
 
-      const data = await res.json()
+      const parseResult = await safeParseResponse<any>(res)
 
-      if (data.success) {
-        setEligibility(data)
+      if (parseResult.ok && parseResult.data?.success) {
+        setEligibility(parseResult.data)
       }
     } catch {
       // Keep dialog usable even if eligibility check fails.
@@ -113,9 +114,9 @@ export function DeleteEmployeeDialog({
         },
       )
 
-      const data = await res.json()
+      const parseResult = await safeParseResponse<any>(res)
 
-      if (data.success) {
+      if (parseResult.ok && parseResult.data?.success) {
         toast.success(
           `Employee ${employeeCode} deactivated successfully.`,
         )
@@ -124,7 +125,8 @@ export function DeleteEmployeeDialog({
         onOpenChange(false)
       } else {
         toast.error(
-          data.error ||
+          parseResult.data?.error ||
+            parseResult.error ||
             'Failed to deactivate employee',
         )
       }
@@ -168,9 +170,9 @@ export function DeleteEmployeeDialog({
         },
       )
 
-      const data = await res.json()
+      const parseResult = await safeParseResponse<any>(res)
 
-      if (data.success) {
+      if (parseResult.ok && parseResult.data?.success) {
         toast.success(
           `Employee ${employeeCode} permanently deleted.`,
         )
@@ -179,7 +181,8 @@ export function DeleteEmployeeDialog({
         onOpenChange(false)
       } else {
         toast.error(
-          data.error ||
+          parseResult.data?.error ||
+            parseResult.error ||
             'Failed to delete employee',
         )
       }

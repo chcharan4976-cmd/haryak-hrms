@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { safeParseResponse } from '@/lib/api-client'
 
 export interface ResetPasswordEmployee {
   id: string
@@ -101,9 +102,10 @@ export function ResetPasswordDialog({
         headers: { 'Content-Type': 'application/json' },
       })
 
-      const data = await res.json()
+      const parseResult = await safeParseResponse<any>(res)
+      const data = parseResult.data || {}
 
-      if (res.ok && data.success && data.temporaryPassword) {
+      if (parseResult.ok && data.success && data.temporaryPassword) {
         setTemporaryPassword(data.temporaryPassword)
         setOfficialEmail(data.officialEmail || displayEmail)
         setEmployeeName(data.employeeName || displayName)
@@ -112,18 +114,20 @@ export function ResetPasswordDialog({
         setShowPassword(true)
         toast.success(`Temporary password generated for ${displayName}`)
         // DO NOT call onSuccess here — keep dialog open so the administrator can view and copy the credential!
-      } else if (res.ok && data.success && !data.temporaryPassword) {
+      } else if (parseResult.ok && data.success && !data.temporaryPassword) {
         setErrorMessage('Server confirmed password reset but failed to return temporary credentials. Please try again or repair the account.')
         toast.error('Temporary password was not returned by the server.')
       } else if (data.canRepair) {
         setCanRepair(true)
         setErrorMessage(
           data.error ||
+            parseResult.error ||
             'Employee authentication account is not properly linked or requires repair.'
         )
       } else {
-        setErrorMessage(data.error || 'Failed to reset temporary password.')
-        toast.error(data.error || 'Failed to reset temporary password.')
+        const err = data.error || parseResult.error || 'Failed to reset temporary password.'
+        setErrorMessage(err)
+        toast.error(err)
       }
     } catch {
       const err = 'Network error while resetting password. Please check your connection.'

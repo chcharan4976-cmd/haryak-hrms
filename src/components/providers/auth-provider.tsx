@@ -5,6 +5,7 @@ import { User, Session } from '@supabase/supabase-js'
 import { createClient } from '@/lib/supabase/client'
 import { toast } from 'sonner'
 import { useRouter } from 'next/navigation'
+import { safeParseResponse } from '@/lib/api-client'
 
 interface UserProfile {
   id: string
@@ -122,11 +123,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       body: JSON.stringify({ identifier, password }),
     })
 
-    const result = await res.json()
-    if (!res.ok || !result.success) {
-      throw new Error(result.error || 'Invalid credentials.')
+    const parseResult = await safeParseResponse<{
+      success: boolean
+      error?: string
+      redirectUrl?: string
+    }>(res)
+
+    if (!parseResult.ok || !parseResult.data?.success) {
+      throw new Error(parseResult.data?.error || parseResult.error || 'Invalid credentials.')
     }
 
+    const result = parseResult.data
     loadSession()
     router.push(result.redirectUrl || '/dashboard')
     router.refresh()

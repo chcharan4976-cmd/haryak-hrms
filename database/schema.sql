@@ -2591,5 +2591,39 @@ CREATE INDEX IF NOT EXISTS idx_annual_leave_comp_ledger ON annual_leave_compensa
 CREATE INDEX IF NOT EXISTS idx_annual_leave_comp_entries ON annual_leave_compensation_entries(company_id, employee_id, calendar_year);
 
 -- ============================================================
+-- EMPLOYEE ID CARD STUDIO (TEMPORARY 24-HOUR GENERATION)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS temporary_employee_id_cards (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  company_id UUID NOT NULL REFERENCES companies(id) ON DELETE RESTRICT,
+  employee_id UUID REFERENCES employees(id) ON DELETE SET NULL,
+  employee_code VARCHAR(50) NOT NULL,
+  design_type VARCHAR(50) NOT NULL DEFAULT 'CORPORATE_ELITE',
+  employee_name VARCHAR(255) NOT NULL,
+  designation VARCHAR(255),
+  department VARCHAR(255),
+  phone VARCHAR(50),
+  email VARCHAR(255),
+  location VARCHAR(255),
+  photo_url TEXT,
+  card_image_path TEXT,
+  card_pdf_path TEXT,
+  card_format VARCHAR(20) DEFAULT 'CR80_PORTRAIT',
+  dimensions VARCHAR(50) DEFAULT '53.98x85.60mm',
+  resolution_dpi INTEGER DEFAULT 300,
+  export_resolution VARCHAR(50) DEFAULT '638x1011',
+  created_by UUID REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours'),
+  deleted_at TIMESTAMPTZ,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_temp_id_cards_company_id ON temporary_employee_id_cards(company_id);
+CREATE INDEX IF NOT EXISTS idx_temp_id_cards_expires_at ON temporary_employee_id_cards(expires_at);
+CREATE INDEX IF NOT EXISTS idx_temp_id_cards_employee_id ON temporary_employee_id_cards(employee_id);
+CREATE INDEX IF NOT EXISTS idx_temp_id_cards_active ON temporary_employee_id_cards(company_id, expires_at) WHERE deleted_at IS NULL;
+
+-- ============================================================
 -- END OF HARYAK HRMS SCHEMA
 -- ============================================================
